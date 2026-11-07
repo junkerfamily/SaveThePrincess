@@ -21,10 +21,13 @@
   }
 
   // ---------- game state ----------
+  const BASEMENT = -1; // levelIndex while you're in the hidden basement under floor 1
+  const levelOf = i => i === BASEMENT ? LEVELS.basement : LEVELS[i];
   let levelIndex = 0;
+  let upstairs = null;   // floor 1 just as you left it when you climbed down the trapdoor
   let state = null;
   let history = [];
-  let screen = 'title'; // title | intro | play | clear | finale
+  let screen = 'title'; // title | intro | play | trapdoor | clear | finale
   let anim = null;       // current move tween
   let queued = null;     // one buffered input while a tween plays
   let particles = [];
@@ -44,6 +47,8 @@
     { a: '#7a5a3c', b: '#6f5135', wall: '#3b2a22', hi: '#55402f', mortar: '#271b15' }, // kitchen
     { a: '#7d5b6c', b: '#755464', wall: '#3f2738', hi: '#5e3c54', mortar: '#2c1a27' }, // chamber
   ];
+  const BASEMENT_PAL = { a: '#4a3c36', b: '#443731', wall: '#251b19', hi: '#3d2c27', mortar: '#150f0e' };
+  const palOf = i => PALETTES[i] || BASEMENT_PAL;
 
   // ---------- sound ----------
   let actx = null, master = null, sfxBus = null, musicBus = null;
@@ -90,7 +95,7 @@
 
   // ---------- music ----------
   const music = window.SabrinaMusic.createPlayer(() => (muted ? null : actx), () => musicBus);
-  function wantedSong() { return screen === 'title' ? 'title' : screen === 'finale' ? 'finale' : levelIndex; }
+  function wantedSong() { return screen === 'title' ? 'title' : screen === 'finale' ? 'finale' : levelIndex === BASEMENT ? 'basement' : levelIndex; }
   function refreshMusic() {
     if (muted || !musicOn || !actx) { music.stop(); return; }
     music.play(wantedSong());
@@ -137,6 +142,10 @@
     fizzle: () => { noise(0.3, 0.18, 2500); tone(220, 0.2, 'sawtooth', 0.03, 0, 110); },
     key: () => { tone(1319, 0.08, 'triangle', 0.05); tone(1760, 0.18, 'triangle', 0.05, 0.08); },
     unlockdoor: () => { tone(180, 0.06, 'square', 0.05); tone(260, 0.06, 'square', 0.05, 0.07); [523, 784].forEach((f, i) => tone(f, 0.2, 'triangle', 0.06, 0.16 + i * 0.1)); },
+    trapdoor: () => { tone(320, 0.35, 'sawtooth', 0.025, 0, 170); noise(0.25, 0.2, 400, 0.2); tone(70, 0.3, 'sine', 0.08, 0.2); },
+    growl: () => { tone(62, 0.5, 'sawtooth', 0.05, 0, 48); noise(0.5, 0.12, 250); },
+    flame: () => { noise(0.75, 0.5, 1100); noise(0.4, 0.3, 3200, 0.05); tone(140, 0.6, 'sawtooth', 0.04, 0, 60); },
+    burn: () => { noise(0.6, 0.3, 4000, 0.1); tone(900, 0.4, 'square', 0.03, 0.1, 200); },
     finale: () => [523, 659, 784, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.3, 'triangle', 0.07, i * 0.14)),
   };
   function play(events) { for (const e of events) SFX[e] && SFX[e](); }
@@ -157,7 +166,7 @@
   // ---------- level flow ----------
   function loadLevel(i) {
     levelIndex = i;
-    state = S.parse(LEVELS[i]);
+    state = S.parse(levelOf(i));
     history = [];
     anim = null; queued = null; particles = [];
     zapAt = 0; wonAt = 0; brew = null;
@@ -166,7 +175,7 @@
     drawMenu(); // before resize, since the recipe card takes room from the board
     resize();
     updateHud();
-    $('hint').textContent = LEVELS[i].hint;
+    $('hint').textContent = levelOf(i).hint;
   }
 
   // Put the tower hero back on the current floor (after an undo or restart cancels a climb).
@@ -210,9 +219,25 @@
     if (result.events.includes('brew') || result.events.includes('plop')) drawMenu();
     if (state.dead) {
       zapAt = now;
-      showToast('Zapped by a gargoyle! Press Z to undo or R to restart.', true);
+      if (state.deathBy === 'burn') {
+        burst(state.hero, ['#ff7a2a', '#ffd24a', '#ff3a1a', '#3a2a24'], 22, 3);
+        showToast('Toasted by the dragon! Press Z to undo or R to restart.', true);
+      } else showToast('Zapped by a gargoyle! Press Z to undo or R to restart.', true);
     }
-    if (state.won) {
+    if (result.descend && !state.dead) {
+      const at = state;
+      setTimeout(() => { if (state === at && screen === 'play') showTrapdoor(); }, 280);
+    }
+    if (result.ascend && !state.won && !state.dead) {
+      const at = state;
+      setTimeout(() => { if (state === at && screen === 'play') climbOut(false); }, 250);
+    }
+    if (state.won && levelIndex === BASEMENT) {
+      wonAt = now;
+      recordBest();
+      const won = state;
+      setTimeout(() => { if (state === won) showHoard(); }, 900);
+    } else if (state.won) {
       wonAt = now;
       recordBest();
       const last = levelIndex === LEVELS.length - 1, won = state;
@@ -269,7 +294,7 @@
 
   function restart() {
     if (screen !== 'play') return;
-    const fresh = S.parse(LEVELS[levelIndex]);
+    const fresh = S.parse(levelOf(levelIndex));
     if (state.moves > 0) history.push(state); // restart can itself be undone
     state = fresh;
     anim = null; queued = null; particles = []; zapAt = 0; wonAt = 0; brew = null;
@@ -280,6 +305,12 @@
   }
 
   function recordBest() {
+    if (levelIndex === BASEMENT) {
+      progress.basement = 'cleared';
+      if (!progress.basementBest || state.moves < progress.basementBest) progress.basementBest = state.moves;
+      store.set('sabrina.progress', progress);
+      return;
+    }
     const k = String(levelIndex);
     const prevBest = progress.best[k];
     if (!prevBest || state.moves < prevBest) progress.best[k] = state.moves;
@@ -290,11 +321,12 @@
   // ---------- HUD & overlays ----------
   function updateHud() {
     if (!state) return;
-    $('floorLabel').textContent = `Floor ${levelIndex + 1} · ${LEVELS[levelIndex].name}`;
+    const lv = levelOf(levelIndex);
+    $('floorLabel').textContent = levelIndex === BASEMENT ? `Hidden Basement · ${lv.name}` : `Floor ${levelIndex + 1} · ${lv.name}`;
     $('gems').textContent = state.gemsLeft;
     $('swings').textContent = state.swings;
     $('keys').textContent = state.keys;
-    $('keyStat').hidden = !LEVELS[levelIndex].recipe && !LEVELS[levelIndex].map.some(r => r.includes('L'));
+    $('keyStat').hidden = !lv.recipe && !lv.map.some(r => r.includes('L'));
     $('moves').textContent = state.moves;
     $('muteBtn').textContent = muted ? 'Muted' : 'Sound';
     $('musicBtn').textContent = musicOn && !muted ? 'Music' : 'No music';
@@ -343,11 +375,14 @@
       const locked = i + 1 > progress.unlocked;
       const best = progress.best[String(i)];
       return `<button data-floor="${i}" ${locked ? 'disabled' : ''} title="${lv.name}">${i + 1}${best ? `<span class="best">${best}</span>` : ''}</button>`;
-    }).join('');
+    }).join('') + (progress.basement // the basement only shows up once you've found the trapdoor
+      ? `<button data-floor="${BASEMENT}" class="cellar" title="Hidden basement: ${LEVELS.basement.name}">🐉${progress.basementBest ? `<span class="best">${progress.basementBest}</span>` : ''}</button>`
+      : '');
   }
 
   function showTitle() {
     screen = 'title';
+    upstairs = null;
     hideToast();
     setOverlay(`
       ${TOWER_SVG}
@@ -374,9 +409,9 @@
     loadLevel(i);
     screen = 'intro';
     setOverlay(`
-      <div class="eyebrow">Floor ${i + 1} of ${LEVELS.length}</div>
-      <h2>${LEVELS[i].name}</h2>
-      <p class="story">${LEVELS[i].hint}</p>
+      <div class="eyebrow">${i === BASEMENT ? 'Hidden basement' : `Floor ${i + 1} of ${LEVELS.length}`}</div>
+      <h2>${levelOf(i).name}</h2>
+      <p class="story">${levelOf(i).hint}</p>
       <button class="primary" id="goBtn">Enter</button>
     `);
     $('goBtn').onclick = beginPlay;
@@ -402,10 +437,73 @@
     $('nextBtn').onclick = () => startFloor(levelIndex + 1);
   }
 
+  // You stepped onto the trapdoor on floor 1.
+  function showTrapdoor() {
+    screen = 'trapdoor';
+    hideToast();
+    const first = !progress.basement;
+    if (first) { progress.basement = 'found'; store.set('sabrina.progress', progress); }
+    setOverlay(`
+      <div class="eyebrow">${first ? 'A secret!' : 'The trapdoor'}</div>
+      <h2>A hidden trapdoor</h2>
+      <p class="story">${first
+        ? 'Under the crate is a wooden trapdoor. Warm air puffs up through the cracks, and from far below comes a long, rumbling snore…'
+        : 'Warm air puffs up through the cracks. Something big is still snoring down there.'}</p>
+      <p>Your progress on this floor will wait for you.</p>
+      <button class="primary" id="downBtn">Climb down</button>
+      <p><button id="stayBtn">Not yet</button></p>
+    `);
+    $('downBtn').onclick = climbDown;
+    $('stayBtn').onclick = stayUp;
+  }
+  function stayUp() { closeOverlay(); screen = 'play'; }
+
+  function climbDown() {
+    upstairs = { levelIndex, state, history };
+    startFloor(BASEMENT);
+  }
+
+  // Back up the basement stairs to floor 1, just as you left it.
+  function climbOut(cleared) {
+    let saved = upstairs;
+    upstairs = null;
+    if (!saved) {
+      // Came straight to the basement from the menu: start floor 1 with the crate pushed off the trapdoor.
+      const s = S.parse(LEVELS[0]), t = s.floor.indexOf('T');
+      if (t >= 0) {
+        const above = t - s.w;
+        if (s.obj[t] === 'B' && s.floor[above] === '.' && !s.obj[above]) { s.obj[t] = ''; s.obj[above] = 'B'; }
+        if (!s.obj[t]) s.hero = t;
+      }
+      saved = { levelIndex: 0, state: s, history: [] };
+    }
+    loadLevel(saved.levelIndex);
+    state = saved.state; history = saved.history;
+    closeOverlay();
+    screen = 'play';
+    updateHud(); drawMenu(); refreshMusic();
+    showToast(cleared ? 'Back in the Gatehouse, pockets full of dragon gems!' : 'You scramble back up to the Gatehouse.', false, 2000);
+  }
+
+  function showHoard() {
+    screen = 'clear';
+    hideToast();
+    const best = progress.basementBest;
+    setOverlay(`
+      <div class="eyebrow">Hidden basement cleared</div>
+      <h2>The dragon’s hoard!</h2>
+      <p>You grabbed every gem in <b>${state.moves}</b> moves${best && best < state.moves ? ` (best: ${best})` : ''}.</p>
+      <p class="story">You tiptoe up the stairs with your pockets full of dragon gems. Behind you, the dragon rolls over and snores on.</p>
+      <button class="primary" id="upBtn">Back upstairs</button>
+    `);
+    SFX.win();
+    $('upBtn').onclick = () => climbOut(true);
+  }
+
   function showFinale() {
     screen = 'finale';
     hideToast();
-    const total = Object.values(progress.best).reduce((a, b) => a + b, 0);
+    const total = LEVELS.reduce((a, lv, i) => a + (progress.best[String(i)] || 0), 0);
     setOverlay(`
       <div class="eyebrow">Thornspire Tower conquered</div>
       <h1>Sabrina is saved!</h1>
@@ -878,6 +976,180 @@
     ctx.beginPath(); ctx.moveTo(px + TS * 0.48, py + TS * 0.52); ctx.lineTo(px + TS * 0.52, py + TS * 0.52); ctx.lineTo(px + TS * 0.54, py + TS * 0.63); ctx.lineTo(px + TS * 0.46, py + TS * 0.63); ctx.fill();
   }
 
+  // ---------- basement sprites ----------
+  // The trapdoor, once the crate is pushed off it. A warm glow leaks up through the cracks.
+  function drawTrapdoor(px, py, t) {
+    const m = TS * 0.1, w = TS - m * 2;
+    const glow = 0.45 + 0.25 * Math.sin(t / 500);
+    ctx.fillStyle = `rgba(255,120,40,${glow})`; ctx.fillRect(px + m - 2, py + m - 2, w + 4, w + 4);
+    ctx.fillStyle = '#6b4526'; ctx.fillRect(px + m, py + m, w, w);
+    ctx.strokeStyle = '#3a2412'; ctx.lineWidth = Math.max(1, TS / 30);
+    for (let k = 1; k < 4; k++) { const xx = px + m + (w * k) / 4; ctx.beginPath(); ctx.moveTo(xx, py + m); ctx.lineTo(xx, py + m + w); ctx.stroke(); }
+    ctx.strokeRect(px + m, py + m, w, w);
+    ctx.fillStyle = '#4b4f5a'; ctx.fillRect(px + m, py + TS * 0.3, w, TS * 0.06); ctx.fillRect(px + m, py + TS * 0.64, w, TS * 0.06);
+    ctx.strokeStyle = '#9aa0ac'; ctx.lineWidth = Math.max(1.5, TS / 24);
+    ctx.beginPath(); ctx.arc(px + TS / 2, py + TS * 0.5, TS * 0.09, 0, 7); ctx.stroke(); // iron ring
+  }
+
+  // Stone steps leading back up to floor 1. They glow gold once the hoard is collected.
+  function drawStairsUp(px, py, t, done) {
+    const n = 4;
+    for (let k = 0; k < n; k++) {
+      const y = py + (k * TS) / n, inset = (n - 1 - k) * TS * 0.06;
+      ctx.fillStyle = ['#a39488', '#8b7d72', '#72665d', '#5b5049'][k];
+      ctx.fillRect(px + TS * 0.08 + inset, y, TS * 0.84 - inset * 2, TS / n - 1);
+      ctx.fillStyle = '#00000040'; ctx.fillRect(px + TS * 0.08 + inset, y + TS / n - 3, TS * 0.84 - inset * 2, 2);
+    }
+    const a = done ? 0.5 + 0.3 * Math.sin(t / 250) : 0.18;
+    const g = ctx.createLinearGradient(px, py, px, py + TS * 0.6);
+    g.addColorStop(0, `rgba(242,196,90,${a})`); g.addColorStop(1, 'rgba(242,196,90,0)');
+    ctx.fillStyle = g; ctx.fillRect(px, py, TS, TS * 0.6);
+  }
+
+  // Little z's drifting up, for snoring things. env fades the whole group in and out.
+  function drawZzz(x, y, size, t, env = 1) {
+    ctx.save();
+    ctx.textBaseline = 'middle';
+    for (let k = 0; k < 3; k++) {
+      const p = ((t / 1300) + k / 3) % 1;
+      ctx.globalAlpha = Math.sin(p * Math.PI) * 0.85 * env;
+      ctx.font = `800 ${Math.round(size * (0.6 + p * 0.6))}px Nunito, system-ui, sans-serif`;
+      ctx.fillStyle = '#efe8f7';
+      ctx.fillText('z', x + p * size * 1.1 + Math.sin(p * 6) * size * 0.15, y - p * size * 2);
+    }
+    ctx.restore();
+  }
+
+  // The dragon fills a box (in tiles: bw wide, bh tall), drawn here facing right with its
+  // head in the middle row. Facing left just mirrors it. u is the size of one tile.
+  function drawDragonSprite(x0, y0, bw, bh, u, dir, phase, t) {
+    const W = bw * u, H = bh * u, hy = H / 2; // head height
+    ctx.save();
+    if (dir === 'left') { ctx.translate(x0 + W, y0); ctx.scale(-1, 1); } else ctx.translate(x0, y0);
+    const breathe = phase === 'calm' ? Math.sin(t / 700) * u * 0.03 : u * 0.05;
+    const body = '#b23a2c', dark = '#741f1a', belly = '#eab56c';
+    // shadow
+    ctx.fillStyle = '#00000050'; ctx.beginPath(); ctx.ellipse(W * 0.45, H * 0.93, W * 0.48, u * 0.14, 0, 0, 7); ctx.fill();
+    // tail curling round the front
+    ctx.strokeStyle = body; ctx.lineCap = 'round'; ctx.lineWidth = u * 0.24;
+    ctx.beginPath(); ctx.moveTo(W * 0.2, H * 0.78); ctx.quadraticCurveTo(W * -0.02, H * 0.95, W * 0.4, H * 0.94); ctx.quadraticCurveTo(W * 0.72, H * 0.93, W * 0.8, H * 0.86); ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = dark; ctx.beginPath(); ctx.moveTo(W * 0.8, H * 0.8); ctx.lineTo(W * 0.95, H * 0.86); ctx.lineTo(W * 0.8, H * 0.92); ctx.closePath(); ctx.fill();
+    // folded wing behind the body
+    ctx.fillStyle = '#5e1d1a';
+    ctx.beginPath();
+    ctx.moveTo(W * 0.28, H * 0.55); ctx.lineTo(W * 0.06, H * 0.12 - breathe); ctx.lineTo(W * 0.3, H * 0.24 - breathe);
+    ctx.lineTo(W * 0.42, H * 0.1 - breathe); ctx.lineTo(W * 0.52, H * 0.46); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#3a100e'; ctx.lineWidth = Math.max(1, u / 30);
+    ctx.beginPath(); ctx.moveTo(W * 0.3, H * 0.5); ctx.lineTo(W * 0.3, H * 0.24 - breathe); ctx.moveTo(W * 0.4, H * 0.48); ctx.lineTo(W * 0.42, H * 0.1 - breathe); ctx.stroke();
+    // body
+    const g = ctx.createRadialGradient(W * 0.35, H * 0.5, u * 0.1, W * 0.4, H * 0.65, u * 1.0);
+    g.addColorStop(0, '#d4523c'); g.addColorStop(1, dark);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.ellipse(W * 0.38, H * 0.66, W * 0.34, H * 0.24 + breathe, 0, 0, 7); ctx.fill();
+    // spikes along the back
+    ctx.fillStyle = '#e8dcc0';
+    for (let k = 0; k < 4; k++) {
+      const a = Math.PI * (1.15 + k * 0.17), bx = W * 0.38 + Math.cos(a) * W * 0.34, by = H * 0.66 + Math.sin(a) * (H * 0.24 + breathe);
+      ctx.beginPath(); ctx.moveTo(bx - u * 0.07, by + u * 0.02); ctx.lineTo(bx + Math.cos(a) * u * 0.14, by + Math.sin(a) * u * 0.14); ctx.lineTo(bx + u * 0.07, by + u * 0.04); ctx.fill();
+    }
+    // belly plates
+    ctx.fillStyle = belly;
+    ctx.beginPath(); ctx.ellipse(W * 0.52, H * 0.7, W * 0.15, H * 0.17, -0.3, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#b8803e'; ctx.lineWidth = Math.max(1, u / 34);
+    for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(W * 0.42, H * (0.7 + k * 0.05)); ctx.lineTo(W * 0.62, H * (0.67 + k * 0.05)); ctx.stroke(); }
+    // legs and claws
+    ctx.fillStyle = dark;
+    ctx.beginPath(); ctx.ellipse(W * 0.2, H * 0.86, u * 0.16, u * 0.1, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(W * 0.64, H * 0.87, u * 0.17, u * 0.1, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#e8dcc0';
+    for (const cxw of [0.27, 0.72]) for (let k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(W * cxw + k * u * 0.06, H * 0.9, u * 0.025, 0, 7); ctx.fill(); }
+    // neck up to the head
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.5, H * 0.52); ctx.quadraticCurveTo(W * 0.6, hy - u * 0.05, W * 0.74, hy - u * 0.2);
+    ctx.lineTo(W * 0.8, hy + u * 0.22); ctx.quadraticCurveTo(W * 0.68, hy + u * 0.3, W * 0.66, H * 0.66); ctx.closePath(); ctx.fill();
+    // horns
+    ctx.fillStyle = '#e8dcc0';
+    ctx.beginPath(); ctx.moveTo(W * 0.7, hy - u * 0.14); ctx.quadraticCurveTo(W * 0.56, hy - u * 0.3, W * 0.5, hy - u * 0.5); ctx.quadraticCurveTo(W * 0.64, hy - u * 0.36, W * 0.76, hy - u * 0.2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(W * 0.76, hy - u * 0.2); ctx.quadraticCurveTo(W * 0.68, hy - u * 0.4, W * 0.66, hy - u * 0.58); ctx.quadraticCurveTo(W * 0.76, hy - u * 0.4, W * 0.82, hy - u * 0.22); ctx.fill();
+    // head and snout (the mouth opens to breathe fire)
+    const jaw = phase === 'fire' ? u * 0.12 : 0;
+    ctx.fillStyle = body;
+    ctx.beginPath(); ctx.ellipse(W * 0.8, hy - u * 0.02, u * 0.3, u * 0.24, 0, 0, 7); ctx.fill();
+    rr(W * 0.8, hy - u * 0.18, W * 0.2 - u * 0.02, u * 0.2, u * 0.08); ctx.fill();          // upper snout
+    if (jaw) { ctx.fillStyle = '#ffb34a'; ctx.fillRect(W * 0.82, hy + u * 0.02, W * 0.18 - u * 0.04, jaw); ctx.fillStyle = body; }
+    rr(W * 0.8, hy + u * 0.02 + jaw, W * 0.18 - u * 0.04, u * 0.13, u * 0.06); ctx.fill();  // lower jaw
+    ctx.fillStyle = '#e8dcc0'; // a couple of teeth
+    ctx.beginPath(); ctx.moveTo(W * 0.9, hy + u * 0.02); ctx.lineTo(W * 0.92, hy + u * 0.08); ctx.lineTo(W * 0.94, hy + u * 0.02); ctx.fill();
+    ctx.fillStyle = dark; ctx.beginPath(); ctx.arc(W - u * 0.1, hy - u * 0.12, u * 0.03, 0, 7); ctx.fill(); // nostril
+    // eye: shut when asleep, cracked open on smoke, wide and glowing on fire
+    const ex = W * 0.8, ey = hy - u * 0.1;
+    if (phase === 'calm') {
+      ctx.strokeStyle = '#3a100e'; ctx.lineWidth = Math.max(1.5, u / 22);
+      ctx.beginPath(); ctx.arc(ex, ey - u * 0.02, u * 0.06, 0.2, Math.PI - 0.2); ctx.stroke();
+    } else {
+      const open = phase === 'fire' ? 1 : 0.45;
+      ctx.fillStyle = '#ffd24a'; ctx.shadowColor = '#ffb020'; ctx.shadowBlur = u * 0.25 * open;
+      ctx.beginPath(); ctx.ellipse(ex, ey, u * 0.07, u * 0.07 * open, 0, 0, 7); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#1a0a08'; ctx.fillRect(ex - u * 0.012, ey - u * 0.06 * open, u * 0.024, u * 0.12 * open);
+    }
+    ctx.restore();
+    // Things that shouldn't be mirrored, in screen space: where the nostril ended up.
+    const nx = dir === 'left' ? x0 + u * 0.1 : x0 + W - u * 0.1, ny = y0 + hy - u * 0.12;
+    return { nx, ny, headX: dir === 'left' ? x0 + W * 0.2 : x0 + W * 0.8, headY: y0 + hy - u * 0.3 };
+  }
+
+  function drawDragon(t) {
+    const d = state.dragon;
+    if (!d) return;
+    const phase = S.dragonPhase(state);
+    const bw = d.x1 - d.x0 + 1, bh = d.y1 - d.y0 + 1;
+    const pos = drawDragonSprite(d.x0 * TS, d.y0 * TS, bw, bh, TS, d.dir, phase, t);
+    if (phase === 'calm') drawZzz(pos.headX, pos.headY, TS * 0.28, t);
+    if (phase === 'smoke') { // wisps curling up from the nose: fire on the next move!
+      for (let k = 0; k < 4; k++) {
+        const p = ((t / 900) + k / 4) % 1;
+        ctx.globalAlpha = (1 - p) * 0.7;
+        ctx.fillStyle = k % 2 ? '#b8aca6' : '#8c807a';
+        ctx.beginPath(); ctx.arc(pos.nx + Math.sin(p * 5 + k) * TS * 0.08, pos.ny - p * TS * 0.7, TS * (0.05 + p * 0.1), 0, 7); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // The dragon's fire lanes: a faint warning while it smokes, a roaring blaze when it breathes.
+  function drawFlames(t) {
+    const phase = S.dragonPhase(state);
+    if (!phase || phase === 'calm') return;
+    const lanes = S.flameLanes(state);
+    for (const lane of lanes) {
+      if (!lane.length) continue;
+      if (phase === 'smoke') {
+        const xs = lane.map(cx), ys = lane.map(cy);
+        const x0 = Math.min(...xs) * TS, y0 = Math.min(...ys) * TS;
+        const w = (Math.max(...xs) + 1) * TS - x0, h = (Math.max(...ys) + 1) * TS - y0;
+        ctx.fillStyle = `rgba(255,130,40,${0.1 + 0.05 * Math.sin(t / 200)})`; ctx.fillRect(x0, y0, w, h);
+        ctx.setLineDash([TS * 0.15, TS * 0.12]); ctx.strokeStyle = 'rgba(255,150,60,0.55)'; ctx.lineWidth = 2;
+        ctx.strokeRect(x0 + 3, y0 + 3, w - 6, h - 6); ctx.setLineDash([]);
+        continue;
+      }
+      lane.forEach((c, j) => {
+        const px = cx(c) * TS, py = cy(c) * TS, fade = Math.max(0.45, 1 - j * 0.06);
+        ctx.fillStyle = `rgba(255,90,20,${0.4 * fade})`; ctx.fillRect(px, py, TS, TS);
+        for (let k = 0; k < 5; k++) {
+          const fx = px + TS * (0.1 + 0.2 * k) + Math.sin(t / 60 + k * 2 + c) * TS * 0.05;
+          const fy = py + TS * (0.5 + 0.18 * Math.sin(t / 90 + k * 1.7 + c * 0.7));
+          const r = TS * (0.2 + 0.08 * Math.sin(t / 70 + k + c)) * fade;
+          ctx.fillStyle = 'rgba(255,60,20,0.55)'; ctx.beginPath(); ctx.arc(fx, fy, r * 1.2, 0, 7); ctx.fill();
+          ctx.fillStyle = 'rgba(255,160,40,0.75)'; ctx.beginPath(); ctx.arc(fx, fy, r * 0.8, 0, 7); ctx.fill();
+          ctx.fillStyle = 'rgba(255,240,150,0.85)'; ctx.beginPath(); ctx.arc(fx, fy, r * 0.35, 0, 7); ctx.fill();
+        }
+      });
+    }
+  }
+
   // The recipe card under the board, with each ingredient ticked off as it goes in.
   function drawMenu() {
     const el = $('menu');
@@ -898,7 +1170,7 @@
   }
 
   function draw(t) {
-    const s = state, pal = PALETTES[levelIndex];
+    const s = state, pal = palOf(levelIndex);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, s.w * TS, s.h * TS);
     const held = S.platesHeld(s);
@@ -917,10 +1189,14 @@
       else if (f === 'C' || f === 'c') drawCauldron(px, py, t, s.brewed, s.recipe.length);
       else if (f === 'L') drawLockedDoor(px, py);
       else if (f === '_') drawPlate(px, py, s.obj[i] === 'B' || s.hero === i);
+      else if (f === 'T' && s.obj[i] !== 'B') drawTrapdoor(px, py, t); // hidden while a crate sits on it
+      else if (f === 'U') drawStairsUp(px, py, t, unlocked);
       else if (S.GARGOYLES[f]) drawGargoyle(px, py, S.GARGOYLES[f], t);
     }
 
+    drawDragon(t);
     drawBeams(t);
+    drawFlames(t);
 
     // gates draw over beams so closed bars look solid
     for (let i = 0; i < s.floor.length; i++) {
@@ -977,6 +1253,12 @@
       drawCrate(lerp(cx(anim.push.from), cx(anim.push.to), e) * TS, lerp(cy(anim.push.from), cy(anim.push.to), e) * TS, false);
     }
 
+    // A clue: now and then the crate hiding the trapdoor snores.
+    const snore = (t % 9000) / 3600;
+    if (snore < 1) for (let i = 0; i < s.floor.length; i++) {
+      if (s.floor[i] === 'T' && s.obj[i] === 'B') drawZzz((cx(i) + 0.62) * TS, (cy(i) + 0.22) * TS, TS * 0.22, t, Math.sin(snore * Math.PI));
+    }
+
     // Sabrina sits on top of the floor layer
     for (let i = 0; i < s.floor.length; i++) {
       if (s.floor[i] === 'S' && !(s.won && s.hero === i)) drawSabrina((cx(i) + 0.5) * TS, (cy(i) + 0.5) * TS, TS, t, unlocked);
@@ -1011,7 +1293,7 @@
     // zap flash
     if (zapAt) {
       const a = Math.max(0, 0.45 - (t - zapAt) / 800);
-      if (a > 0) { ctx.fillStyle = `rgba(255,60,40,${a})`; ctx.fillRect(0, 0, s.w * TS, s.h * TS); }
+      if (a > 0) { ctx.fillStyle = s.deathBy === 'burn' ? `rgba(255,130,30,${a})` : `rgba(255,60,40,${a})`; ctx.fillRect(0, 0, s.w * TS, s.h * TS); }
     }
     // win glow
     if (wonAt) {
@@ -1055,6 +1337,7 @@
     : { bottom: 0.07, top: 0.3, land: 0.38, hole: [0, 0.32] };
   // Where the hero can stand on floor i (not over the stairwell coming up from below).
   function walkRange(i) {
+    if (i === BASEMENT) return [0.1, 0.6]; // the dragon sleeps on the right
     if (i === 0) return [0.1, 0.9];
     return (i - 1) % 2 === 0 ? [0.1, 0.64] : [0.36, 0.9];
   }
@@ -1071,14 +1354,17 @@
   function towerLayout() {
     const W = towerW, H = towerH;
     const ground = H * 0.05, roof = H * 0.17;
+    // Once you've found it, the hidden basement shows up as a cave under the ground.
+    const cellar = progress.basement || levelIndex === BASEMENT ? Math.round(H * 0.11) : 0;
+    const base = H - cellar;                      // bottom of the ground band
     const pad = Math.round(W * 0.05), wt = Math.max(6, Math.round(W * 0.06));
-    const fh = (H - ground - roof) / LEVELS.length;
+    const fh = (H - ground - roof - cellar) / LEVELS.length;
     const ix0 = pad + wt, ix1 = W - pad - wt, iw = ix1 - ix0;
     const st = Math.max(3, fh * 0.08);
     return {
-      W, H, ground, roof, pad, wt, fh, ix0, ix1, iw, st,
-      top: i => H - ground - (i + 1) * fh,          // top edge of floor i's band
-      floorY: i => H - ground - i * fh - st,        // where feet stand on floor i
+      W, H, ground, roof, pad, wt, fh, ix0, ix1, iw, st, cellar, base,
+      top: i => i === BASEMENT ? base : base - ground - (i + 1) * fh, // top edge of floor i's band
+      floorY: i => i === BASEMENT ? H - st - 2 : base - ground - i * fh - st, // where feet stand
       X: u => ix0 + u * iw,
     };
   }
@@ -1207,10 +1493,10 @@
 
     // outer walls, cut open so we can see inside
     for (const x of [L.pad, L.ix1]) {
-      ctx.fillStyle = '#3d3058'; ctx.fillRect(x, L.roof, L.wt, L.H - L.roof - L.ground);
+      ctx.fillStyle = '#3d3058'; ctx.fillRect(x, L.roof, L.wt, L.base - L.roof - L.ground);
       ctx.fillStyle = '#2a2142';
-      for (let y = L.roof + 6; y < L.H - L.ground; y += 10) ctx.fillRect(x, y, L.wt, 1);
-      ctx.fillStyle = '#5a4a7a'; ctx.fillRect(x === L.pad ? x + L.wt - 1.5 : x, L.roof, 1.5, L.H - L.roof - L.ground);
+      for (let y = L.roof + 6; y < L.base - L.ground; y += 10) ctx.fillRect(x, y, L.wt, 1);
+      ctx.fillStyle = '#5a4a7a'; ctx.fillRect(x === L.pad ? x + L.wt - 1.5 : x, L.roof, 1.5, L.base - L.roof - L.ground);
     }
 
     // roof and flag
@@ -1228,7 +1514,8 @@
 
     // ground
     ctx.fillStyle = '#1b1430';
-    ctx.beginPath(); ctx.moveTo(0, L.H); ctx.lineTo(0, L.H - L.ground * 0.5); ctx.quadraticCurveTo(L.W / 2, L.H - L.ground * 1.5, L.W, L.H - L.ground * 0.5); ctx.lineTo(L.W, L.H); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, L.base); ctx.lineTo(0, L.base - L.ground * 0.5); ctx.quadraticCurveTo(L.W / 2, L.base - L.ground * 1.5, L.W, L.base - L.ground * 0.5); ctx.lineTo(L.W, L.base); ctx.closePath(); ctx.fill();
+    if (L.cellar) drawTowerCellar(L, t, here);
 
     // Sabrina waits on the top floor; the hero joins her when she's saved
     const s = L.fh * 0.62, last = n - 1;
@@ -1244,6 +1531,32 @@
 
     tHero.lastT = t;
     ctx = boardCtx;
+  }
+
+  // The hidden basement: a cave under the tower with a ladder up and a sleeping dragon.
+  function drawTowerCellar(L, t, here) {
+    const y0 = L.base, y1 = L.H, fy = L.floorY(BASEMENT);
+    ctx.fillStyle = '#0e0a17'; ctx.fillRect(0, y0, L.W, y1 - y0);
+    ctx.fillStyle = BASEMENT_PAL.wall; rr(L.ix0, y0 + 3, L.iw, y1 - y0 - 3, 6); ctx.fill();
+    if (here === BASEMENT) {
+      const g = ctx.createRadialGradient(L.X(0.4), (y0 + y1) / 2, 2, L.X(0.4), (y0 + y1) / 2, L.iw * 0.6);
+      g.addColorStop(0, `rgba(255,140,50,${0.25 + 0.05 * Math.sin(t / 300)})`); g.addColorStop(1, 'rgba(255,140,50,0)');
+      ctx.fillStyle = g; ctx.fillRect(L.ix0, y0, L.iw, y1 - y0);
+    }
+    ctx.fillStyle = '#251d33'; ctx.fillRect(L.ix0, fy, L.iw, L.st);
+    // ladder up to the trapdoor on floor 1
+    const lx = L.X(0.22), top = L.floorY(0) + L.st;
+    ctx.strokeStyle = '#8a5a33'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(lx - 4, top); ctx.lineTo(lx - 4, fy); ctx.moveTo(lx + 4, top); ctx.lineTo(lx + 4, fy); ctx.stroke();
+    for (let y = top + 4; y < fy; y += 5) { ctx.beginPath(); ctx.moveTo(lx - 4, y); ctx.lineTo(lx + 4, y); ctx.stroke(); }
+    // the dragon, curled up asleep
+    const u = (fy - y0 - 4) / 3;
+    const pos = drawDragonSprite(L.X(0.92) - u * 2, fy - u * 3, 2, 3, u, 'left', 'calm', t);
+    drawZzz(pos.headX, pos.headY, u * 0.35, t);
+    ctx.font = `800 ${Math.max(10, Math.round(L.fh * 0.2))}px Nunito, system-ui, sans-serif`;
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = here === BASEMENT ? '#f2c45a' : '#d8cbe8';
+    ctx.fillText('B' + (progress.basement === 'cleared' ? ' ✓' : ''), L.ix0 + 4, y0 + 5);
   }
 
   function runQueued() {
@@ -1277,6 +1590,8 @@
       if (btn) btn.click();
     } else if (e.code === 'Escape' && screen === 'intro') {
       showTitle();
+    } else if (e.code === 'Escape' && screen === 'trapdoor') {
+      stayUp();
     }
   });
 
@@ -1320,9 +1635,13 @@
 
   // ---------- boot ----------
   // Shortcut: add ?floor=5 (or #floor=5) to the address to jump straight to that floor.
-  // It also unlocks every floor up to that one in the floor picker.
-  const jump = parseInt(new URLSearchParams(location.search).get('floor') ?? (location.hash.match(/floor=(\d+)/) || [])[1], 10);
-  if (jump >= 1 && jump <= LEVELS.length) {
+  // It also unlocks every floor up to that one in the floor picker. ?floor=b goes to the basement.
+  const jumpArg = new URLSearchParams(location.search).get('floor') ?? (location.hash.match(/floor=(\w+)/) || [])[1];
+  const jump = parseInt(jumpArg, 10);
+  if (/^b(asement)?$/i.test(jumpArg || '')) {
+    if (!progress.basement) { progress.basement = 'found'; store.set('sabrina.progress', progress); }
+    startFloor(BASEMENT);
+  } else if (jump >= 1 && jump <= LEVELS.length) {
     progress.unlocked = Math.max(progress.unlocked, jump);
     store.set('sabrina.progress', progress);
     startFloor(jump - 1);

@@ -9,6 +9,11 @@
 //   ^ v < >  gargoyle, glaring in that direction
 //   C  cauldron        t f w  ingredients: toadstool, feather, bat wing (push them like crates)
 //   L  locked door (needs a key)          K  key
+//   T  trapdoor down to the hidden basement   Q  crate sitting on a trapdoor
+//   U  stairs back up (out of the basement)
+//   X  dragon (a block of X cells). It breathes fire out of its front, across every row
+//      it covers, on every `breath`-th move (default 3). Smoke curls up one move before.
+//      Crates block the flames, just like a gargoyle's glare.
 //
 // A level with a cauldron lists its recipe, e.g. recipe: ['t', 'f', 'w'].
 // Push the ingredients into the cauldron in that order. The last one brews a key:
@@ -40,6 +45,7 @@
           case 'K': o = 'K'; break;
           case 't': case 'f': case 'w': o = c; break;
           case 'P': f = '_'; o = 'B'; break; // crate already on a plate
+          case 'Q': f = 'T'; o = 'B'; break; // crate hiding a trapdoor
           case ' ': f = '#'; break;
           case '.': break;
           default: f = c;
@@ -47,12 +53,22 @@
         floor.push(f); obj.push(o);
       }
     }
+    // The dragon's bounding box, so we know which rows (or columns) it breathes across.
+    let dragon = null;
+    floor.forEach((f, i) => {
+      if (f !== 'X') return;
+      const x = i % w, y = Math.floor(i / w);
+      if (!dragon) dragon = { x0: x, y0: y, x1: x, y1: y };
+      dragon.x0 = Math.min(dragon.x0, x); dragon.x1 = Math.max(dragon.x1, x);
+      dragon.y0 = Math.min(dragon.y0, y); dragon.y1 = Math.max(dragon.y1, y);
+    });
+    if (dragon) { dragon.dir = level.dragonDir || 'left'; dragon.breath = level.breath ?? 3; }
     return {
       w, h, floor, obj, hero, dir: 'down',
       swings: level.swings ?? 0,
       hammerSwings: level.hammerSwings ?? 2,
       gemsLeft: gems, gemsTotal: gems,
-      keys: 0, recipe: level.recipe || [], brewed: 0,
+      keys: 0, recipe: level.recipe || [], brewed: 0, dragon,
       moves: 0, dead: false, won: false,
     };
   }
@@ -82,7 +98,7 @@
 
   function heroCanEnter(s, i, held) {
     const f = s.floor[i];
-    if (f === '.' || f === '=' || f === '_') return true;
+    if (f === '.' || f === '=' || f === '_' || f === 'T' || f === 'U') return true;
     if (f === '|') return gateOpen(s, i, held);
     if (f === 'D' || f === 'S') return s.gemsLeft === 0;
     if (f === 'L') return s.keys > 0;
@@ -93,13 +109,13 @@
   function ingredientCanEnter(s, i) {
     if (s.obj[i] !== '') return false;
     const f = s.floor[i];
-    return f === '.' || f === '=';
+    return f === '.' || f === '=' || f === 'T';
   }
 
   function crateCanEnter(s, i, held) {
     if (s.obj[i] !== '') return false;
     const f = s.floor[i];
-    if (f === '.' || f === '=' || f === '_' || f === '~') return true;
+    if (f === '.' || f === '=' || f === '_' || f === '~' || f === 'T') return true;
     if (f === '|') return held;
     return false;
   }
@@ -108,7 +124,7 @@
     if (isPushable(s.obj[i])) return true;
     const f = s.floor[i];
     if (f === '|') return !gateOpen(s, i, held);
-    return !(f === '.' || f === '=' || f === '_' || f === '~');
+    return !(f === '.' || f === '=' || f === '_' || f === '~' || f === 'T' || f === 'U');
   }
 
   // Every cell lit by a gargoyle's glare.
@@ -136,8 +152,51 @@
     return lit;
   }
 
+  // Where the dragon is in its breathing cycle: 'calm', 'smoke' (fire next move) or 'fire'.
+  function dragonPhase(s) {
+    if (!s.dragon) return null;
+    const p = s.moves % s.dragon.breath;
+    return p === s.dragon.breath - 1 ? 'fire' : p === s.dragon.breath - 2 ? 'smoke' : 'calm';
+  }
+
+  // The lanes of fire the dragon breathes, one per row (or column) it covers.
+  function flameLanes(s) {
+    const d = s.dragon;
+    if (!d) return [];
+    const held = platesHeld(s);
+    const horiz = d.dir === 'left' || d.dir === 'right';
+    const lanes = [];
+    const [a, b] = horiz ? [d.y0, d.y1] : [d.x0, d.x1];
+    for (let k = a; k <= b; k++) {
+      let x = horiz ? (d.dir === 'left' ? d.x0 - 1 : d.x1 + 1) : k;
+      let y = horiz ? k : (d.dir === 'up' ? d.y0 - 1 : d.y1 + 1);
+      const [dx, dy] = DIRS[d.dir];
+      const cells = [];
+      while (x >= 0 && y >= 0 && x < s.w && y < s.h && !blocksBeam(s, y * s.w + x, held)) {
+        cells.push(y * s.w + x);
+        x += dx; y += dy;
+      }
+      lanes.push(cells);
+    }
+    return lanes;
+  }
+
+  function flames(s) {
+    const lit = new Set();
+    if (dragonPhase(s) === 'fire') for (const lane of flameLanes(s)) lane.forEach(c => lit.add(c));
+    return lit;
+  }
+
   function checkDeath(s) {
-    if (!s.won && beams(s).has(s.hero)) s.dead = true;
+    if (s.won) return;
+    if (beams(s).has(s.hero)) { s.dead = true; s.deathBy = 'zap'; }
+    else if (flames(s).has(s.hero)) { s.dead = true; s.deathBy = 'burn'; }
+  }
+
+  function dragonEvents(n, events) {
+    const p = dragonPhase(n);
+    if (p === 'fire') events.push('flame');
+    else if (p === 'smoke') events.push('growl');
   }
 
   // Try to walk one tile. Returns { state, moved, events, push } — state is always a new object.
@@ -213,10 +272,17 @@
       n.won = true;
       events.push('win');
     }
+    let descend = false, ascend = false;
+    if (n.floor[t] === 'T') { descend = true; events.push('trapdoor'); }
+    if (n.floor[t] === 'U') {
+      ascend = true;
+      if (n.gemsLeft === 0) { n.won = true; events.push('win'); }
+    }
     if (!push && events.length === 0) events.push('step');
+    dragonEvents(n, events);
     checkDeath(n);
-    if (n.dead) events.push('zap');
-    return { state: n, moved: true, events, push, from };
+    if (n.dead) events.push(n.deathBy);
+    return { state: n, moved: true, events, push, from, descend, ascend };
   }
 
   // Swing the hammer at the tile the hero is facing.
@@ -230,14 +296,15 @@
     n.swings--;
     n.moves++;
     const events = ['smash'];
+    dragonEvents(n, events);
     checkDeath(n);
-    if (n.dead) events.push('zap');
+    if (n.dead) events.push(n.deathBy);
     return { state: n, moved: true, events, smashed: t };
   }
 
   const LEVELS = [];
 
-  const api = { DIRS, DIR_LIST, GARGOYLES, INGREDIENTS, isIngredient, isPushable, LEVELS, parse, clone, step, smash, beams, beamSegments, platesHeld, gateOpen, neighbor };
+  const api = { DIRS, DIR_LIST, GARGOYLES, INGREDIENTS, isIngredient, isPushable, LEVELS, parse, clone, step, smash, beams, beamSegments, dragonPhase, flameLanes, flames, platesHeld, gateOpen, neighbor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Sabrina = api;
 })(this);

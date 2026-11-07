@@ -11,7 +11,7 @@
         '#....B....#',
         '##.###.##B#',
         '#.....B...#',
-        '#*.#....#D#',
+        '#*Q#....#D#', // Q: a crate hiding the trapdoor to the basement
         '#..#.*....#',
         '###########',
       ],
@@ -94,6 +94,27 @@
       ],
     },
   ];
+
+  // A secret room under the Gatehouse, reached through the trapdoor under a crate on floor 1.
+  // It isn't one of the six floors: it doesn't count toward the climb, and the stairs (U)
+  // lead back up to floor 1 just as you left it.
+  LEVELS.basement = {
+    name: 'The Dragon’s Lair',
+    hint: 'The dragon breathes fire on every third move. When smoke curls from its nose, it’s about to blow! Crates block the flames. Grab the hoard and climb back up.',
+    dragonDir: 'left',
+    breath: 3,
+    map: [
+      '#############',
+      '#U@..#..*...#',
+      '#..B.#......#',
+      '#.........XX#',
+      '#*..B.....XX#',
+      '#.........XX#',
+      '#.#.##.#.####',
+      '#*..B..#*..*#',
+      '#############',
+    ],
+  };
   if (typeof module !== 'undefined' && module.exports) module.exports = LEVELS;
   else root.SABRINA_LEVELS = LEVELS;
 })(this);

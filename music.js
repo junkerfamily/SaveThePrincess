@@ -83,6 +83,16 @@
         { ...PAD, notes: CHAMBER_BASS },
       ],
     },
+    // Hidden basement: a slow, low tune for tiptoeing past a sleeping dragon.
+    basement: {
+      bpm: 66,
+      tracks: [
+        { wave: 'sawtooth', vol: 0.08, len: 3.5, cutoff: 380, notes: 'D2 . . . D2 . . . | Bb1 . . . Bb1 . . . | C2 . . . C2 . . . | A1 . . . A1 . C#2 .' },
+        { ...SOFT, vol: 0.07, notes: 'D4 . . F4 E4 . . D4 | F4 . . . . . . . | E4 . . G4 F4 . E4 . | C#4 . . . . . . . | D4 . . A4 G4 . F4 . | Bb4 . . . A4 . . . | G4 . F4 . E4 . C#4 . | D4 . . . . . . .' },
+        { ...PAD, vol: 0.05, notes: 'A2 . . . . . . . | F2 . . . . . . . | G2 . . . . . . . | E2 . . . . . . .' },
+        { drums: 'K . . . . . K . | . . . . . . . . | K . . . . . K . | . . . . . . t .' },
+      ],
+    },
   };
   // The finale replays Sabrina's theme a little faster.
   SONGS.finale = { ...SONGS[5], bpm: 92 };
