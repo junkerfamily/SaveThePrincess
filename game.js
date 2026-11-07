@@ -31,6 +31,8 @@
   let swingAnim = 0;     // time of last hammer swing
   let zapAt = 0;
   let wonAt = 0;
+  let brew = null;       // { at, cell }: the cauldron fading into a key behind the smoke
+  const BREW_MS = 1300;
   let TS = 48, dpr = 1;
   const MOVE_MS = 110;
 
@@ -158,7 +160,7 @@
     state = S.parse(LEVELS[i]);
     history = [];
     anim = null; queued = null; particles = [];
-    zapAt = 0; wonAt = 0;
+    zapAt = 0; wonAt = 0; brew = null;
     climb = null;
     if (tHero.floor !== i) { tHero.floor = i; tHero.u = null; } // jumped floors: no walk, just appear
     drawMenu(); // before resize, since the recipe card takes room from the board
@@ -196,9 +198,14 @@
     }
     if (result.events.includes('brew')) {
       puff(result.push.to);
-      showToast('POOF! The cauldron made a key!', false, 2000);
+      brew = { at: now, cell: result.push.to };
+      showToast('POOF! The cauldron turned into a key. Go grab it!', false, 2400);
     }
-    if (result.events.includes('key')) burst(state.hero, ['#f2c45a', '#fff3c4'], 12, 2.2);
+    if (result.events.includes('key')) {
+      burst(state.hero, ['#f2c45a', '#fff3c4'], 12, 2.2);
+      showToast('You got the key!', false, 1400);
+      flashStat('keyStat');
+    }
     if (result.events.includes('unlockdoor')) { burst(state.hero, ['#f2c45a', '#fff3c4', '#c98a3a'], 16, 2.6); showToast('Unlocked!', false, 1200); }
     if (result.events.includes('brew') || result.events.includes('plop')) drawMenu();
     if (state.dead) {
@@ -253,7 +260,7 @@
   function undo() {
     if (screen !== 'play' || !history.length) return;
     state = history.pop();
-    anim = null; queued = null; zapAt = 0; wonAt = 0;
+    anim = null; queued = null; zapAt = 0; wonAt = 0; brew = null;
     resetTowerHero();
     hideToast();
     tone(500, 0.06, 'triangle', 0.04, 0, 300);
@@ -265,7 +272,7 @@
     const fresh = S.parse(LEVELS[levelIndex]);
     if (state.moves > 0) history.push(state); // restart can itself be undone
     state = fresh;
-    anim = null; queued = null; particles = []; zapAt = 0; wonAt = 0;
+    anim = null; queued = null; particles = []; zapAt = 0; wonAt = 0; brew = null;
     resetTowerHero();
     hideToast();
     tone(300, 0.1, 'triangle', 0.04, 0, 600);
@@ -304,6 +311,11 @@
     t.style.display = 'block';
     clearTimeout(toastTimer);
     if (ms) toastTimer = setTimeout(hideToast, ms);
+  }
+  // Make a HUD counter pop so a change is easy to notice.
+  function flashStat(id) {
+    const el = $(id);
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
   }
   function hideToast() { $('toast').style.display = 'none'; clearTimeout(toastTimer); }
 
@@ -931,7 +943,18 @@
         }
         drawIngredient(o, px, py);
       } else if (o === 'K') {
-        if (!(anim && anim.push && anim.push.into && k < 1)) drawKey(px, py, t);
+        if (brew && brew.cell === i && t - brew.at < BREW_MS) {
+          // the spent cauldron fades out behind the smoke, then the key pops up in its place
+          const p = (t - brew.at) / BREW_MS;
+          ctx.globalAlpha = Math.max(0, 1 - p * 1.6);
+          drawCauldron(px, py, t, 1, 1);
+          ctx.globalAlpha = 1;
+          if (p > 0.55) {
+            const sc = ease(Math.min(1, (p - 0.55) / 0.45)) * (1 + 0.25 * Math.sin(Math.min(1, (p - 0.55) / 0.45) * Math.PI));
+            ctx.save(); ctx.translate(px + TS / 2, py + TS / 2); ctx.scale(sc, sc); ctx.translate(-TS / 2, -TS / 2);
+            drawKey(0, 0, t); ctx.restore();
+          }
+        } else drawKey(px, py, t);
       } else if (o === 'B') {
         if (anim && anim.push && anim.push.to === i) {
           px = lerp(cx(anim.push.from), cx(i), e) * TS; py = lerp(cy(anim.push.from), cy(i), e) * TS;

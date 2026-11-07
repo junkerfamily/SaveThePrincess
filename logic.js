@@ -11,8 +11,8 @@
 //   L  locked door (needs a key)          K  key
 //
 // A level with a cauldron lists its recipe, e.g. recipe: ['t', 'f', 'w'].
-// Push the ingredients into the cauldron in that order. The last one brews a key,
-// which pops out right where the hero is standing.
+// Push the ingredients into the cauldron in that order. The last one brews a key:
+// the cauldron turns into a key, and the hero walks over it to pick it up.
 
 (function (root) {
   const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
@@ -160,8 +160,8 @@
         n.brewed++;
         events.push('plop');
         if (n.brewed === n.recipe.length) {
-          n.floor[t2] = 'c'; // brewed: still in the way, but done bubbling
-          n.obj[t] = 'K';    // the key pops out where the hero is about to stand
+          n.floor[t2] = '.'; // the cauldron turns into a key...
+          n.obj[t2] = 'K';   // ...which the hero has to walk over to pick up
           events.push('brew');
         }
         push = { from: t, to: t2, item, into: true };
