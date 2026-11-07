@@ -13,6 +13,12 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
   };
   let progress = store.get('sabrina.progress', { unlocked: 1, best: {} });
+  if (!progress.v) { // v2 added the Witch's Kitchen as floor 5, so the old floor 5 is now floor 6
+    if (progress.best['4'] != null) { progress.best['5'] = progress.best['4']; delete progress.best['4']; }
+    if (progress.unlocked >= 5) progress.unlocked += 1;
+    progress.v = 2;
+    store.set('sabrina.progress', progress);
+  }
 
   // ---------- game state ----------
   let levelIndex = 0;
@@ -33,6 +39,7 @@
     { a: '#4c5a5d', b: '#465356', wall: '#233039', hi: '#38505c', mortar: '#18222a' }, // cellar
     { a: '#6b5b4b', b: '#645444', wall: '#3a2e26', hi: '#58463a', mortar: '#29201a' }, // rubble
     { a: '#565070', b: '#4f4968', wall: '#2a2341', hi: '#42385e', mortar: '#1c1730' }, // gallery
+    { a: '#7a5a3c', b: '#6f5135', wall: '#3b2a22', hi: '#55402f', mortar: '#271b15' }, // kitchen
     { a: '#7d5b6c', b: '#755464', wall: '#3f2738', hi: '#5e3c54', mortar: '#2c1a27' }, // chamber
   ];
 
@@ -82,6 +89,11 @@
     nohammer: () => tone(150, 0.08, 'square', 0.03),
     zap: () => { tone(1200, 0.5, 'sawtooth', 0.07, 0, 60); noise(0.3, 0.15, 3000); },
     win: () => [392, 523, 659, 784, 1047].forEach((f, i) => tone(f, 0.25, 'triangle', 0.07, i * 0.1)),
+    plop: () => { tone(300, 0.18, 'sine', 0.07, 0, 90); noise(0.25, 0.15, 700, 0.05); tone(520, 0.08, 'sine', 0.04, 0.16); tone(640, 0.08, 'sine', 0.04, 0.24); },
+    brew: () => { noise(0.9, 0.35, 900, 0.15); [392, 494, 587, 784].forEach((f, i) => tone(f, 0.25, 'sine', 0.06, 0.3 + i * 0.09)); },
+    fizzle: () => { noise(0.3, 0.18, 2500); tone(220, 0.2, 'sawtooth', 0.03, 0, 110); },
+    key: () => { tone(1319, 0.08, 'triangle', 0.05); tone(1760, 0.18, 'triangle', 0.05, 0.08); },
+    unlockdoor: () => { tone(180, 0.06, 'square', 0.05); tone(260, 0.06, 'square', 0.05, 0.07); [523, 784].forEach((f, i) => tone(f, 0.2, 'triangle', 0.06, 0.16 + i * 0.1)); },
     finale: () => [523, 659, 784, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.3, 'triangle', 0.07, i * 0.14)),
   };
   function play(events) { for (const e of events) SFX[e] && SFX[e](); }
@@ -109,6 +121,7 @@
     resize();
     updateHud();
     $('hint').textContent = LEVELS[i].hint;
+    drawMenu();
   }
 
   function commit(result, kind) {
@@ -128,6 +141,18 @@
     if (result.events.includes('hammer')) burst(state.hero, ['#f2c45a', '#fff3c4'], 12, 2.2);
     if (result.events.includes('splash')) burst(result.push.to, ['#7cc0ff', '#bfe2ff', '#4a8fd6'], 18, 2.6);
     if (result.events.includes('unlock')) showToast('The way up is open!', false, 1600);
+    if (result.events.includes('plop') && !result.events.includes('brew')) {
+      burst(result.push.to, ['#7dff9a', '#c6ffd0', '#b07cff'], 14, 2);
+      const next = state.recipe[state.brewed];
+      showToast(`Plop! Now the ${S.INGREDIENTS[next]}.`, false, 1500);
+    }
+    if (result.events.includes('brew')) {
+      puff(result.push.to);
+      showToast('POOF! The cauldron made a key!', false, 2000);
+    }
+    if (result.events.includes('key')) burst(state.hero, ['#f2c45a', '#fff3c4'], 12, 2.2);
+    if (result.events.includes('unlockdoor')) { burst(state.hero, ['#f2c45a', '#fff3c4', '#c98a3a'], 16, 2.6); showToast('Unlocked!', false, 1200); }
+    if (result.events.includes('brew') || result.events.includes('plop')) drawMenu();
     if (state.dead) {
       zapAt = now;
       showToast('Zapped by a gargoyle! Press Z to undo or R to restart.', true);
@@ -146,7 +171,11 @@
     if (screen !== 'play' || state.dead || state.won) return;
     if (anim && performance.now() - anim.start < MOVE_MS) { queued = { type: 'move', dir }; return; }
     const r = S.step(state, dir);
-    if (!r.moved) { state = r.state; play(r.events); return; } // just turn to face
+    if (!r.moved) {
+      state = r.state; play(r.events); // just turn to face
+      if (r.wrong) showToast(`Fizzle! The menu says the ${S.INGREDIENTS[r.need]} goes in next.`, true, 2200);
+      return;
+    }
     commit(r, 'move');
   }
 
@@ -169,7 +198,7 @@
     anim = null; queued = null; zapAt = 0; wonAt = 0;
     hideToast();
     tone(500, 0.06, 'triangle', 0.04, 0, 300);
-    updateHud();
+    updateHud(); drawMenu();
   }
 
   function restart() {
@@ -180,7 +209,7 @@
     anim = null; queued = null; particles = []; zapAt = 0; wonAt = 0;
     hideToast();
     tone(300, 0.1, 'triangle', 0.04, 0, 600);
-    updateHud();
+    updateHud(); drawMenu();
   }
 
   function recordBest() {
@@ -197,6 +226,8 @@
     $('floorLabel').textContent = `Floor ${levelIndex + 1} · ${LEVELS[levelIndex].name}`;
     $('gems').textContent = state.gemsLeft;
     $('swings').textContent = state.swings;
+    $('keys').textContent = state.keys;
+    $('keyStat').hidden = !LEVELS[levelIndex].recipe && !LEVELS[levelIndex].map.some(r => r.includes('L'));
     $('moves').textContent = state.moves;
     $('muteBtn').textContent = muted ? 'Muted' : 'Sound';
   }
@@ -245,9 +276,9 @@
     hideToast();
     setOverlay(`
       ${TOWER_SVG}
-      <div class="eyebrow">A tower of five puzzles</div>
+      <div class="eyebrow">A tower of six puzzles</div>
       <h1>Saving Sabrina</h1>
-      <p class="story">Princess Sabrina is locked at the top of Thornspire Tower. Climb all five floors,
+      <p class="story">Princess Sabrina is locked at the top of Thornspire Tower. Climb all six floors,
       gathering every gem to unseal each staircase, and bring her home.</p>
       <div class="controls">
         <b>Arrows / WASD</b><span>Walk &amp; push crates</span>
@@ -286,7 +317,8 @@
       <h2>Up the stairs!</h2>
       <p>You finished <b>${LEVELS[levelIndex].name}</b> in <b>${state.moves}</b> moves${best && best < state.moves ? ` (best: ${best})` : ''}.</p>
       <p class="story">${['Sabrina’s voice drifts down from far above…', 'You hear singing through the stones. Keep climbing.',
-        'A ribbon flutters down the stairwell.', 'One more floor. She’s calling your name!'][levelIndex] || ''}</p>
+        'A ribbon flutters down the stairwell.', 'Something smells… bubbly. Is that a kitchen up there?',
+        'The cauldron bubbles behind you. One more floor. She’s calling your name!'][levelIndex] || ''}</p>
       <button class="primary" id="nextBtn">Next floor</button>
     `);
     SFX.win();
@@ -302,7 +334,7 @@
       <h1>Sabrina is saved!</h1>
       <canvas id="finaleArt" width="260" height="130"></canvas>
       <p class="story">The gargoyles fall silent, the gate swings wide, and Princess Sabrina takes your hand.
-      Together you walk down all five floors into the morning light.</p>
+      Together you walk down all six floors into the morning light.</p>
       <p>Your best runs add up to <b>${total}</b> moves. Can you climb it in fewer?</p>
       <button class="primary" id="againBtn">Back to the tower</button>
     `);
@@ -319,6 +351,18 @@
       const a = Math.random() * Math.PI * 2, v = (0.4 + Math.random()) * speed;
       particles.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 1, life: 1, color: colors[k % colors.length], size: 2 + Math.random() * 3 });
     }
+  }
+
+  // A big, slow puff of smoke for the finished brew.
+  function puff(i) {
+    const x = (cx(i) + 0.5) * TS, y = (cy(i) + 0.3) * TS;
+    const colors = ['#d9d2e6', '#b8a9cf', '#9d8bbd', '#efe8f7', '#8be0a0'];
+    for (let k = 0; k < 34; k++) {
+      const a = Math.random() * Math.PI * 2, v = Math.random() * TS * 0.05;
+      particles.push({ x: x + Math.cos(a) * TS * 0.2, y, vx: Math.cos(a) * v, vy: -Math.random() * TS * 0.05 - 0.5,
+        life: 1, decay: 0.008 + Math.random() * 0.008, g: -0.01, round: true, color: colors[k % colors.length], size: TS * (0.12 + Math.random() * 0.14) });
+    }
+    burst(i, ['#f2c45a', '#fff3c4', '#ff6f98'], 18, 3);
   }
 
   // ---------- drawing ----------
@@ -624,6 +668,142 @@
     ctx.fill(); ctx.restore();
   }
 
+
+  // ---------- kitchen sprites ----------
+  function drawToadstool(px, py) {
+    const c = px + TS / 2;
+    ctx.fillStyle = '#00000040'; ctx.beginPath(); ctx.ellipse(c, py + TS * 0.84, TS * 0.3, TS * 0.08, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#f3e6cf'; rr(c - TS * 0.1, py + TS * 0.45, TS * 0.2, TS * 0.38, TS * 0.06); ctx.fill(); // stem
+    ctx.fillStyle = '#d8354a';
+    ctx.beginPath(); ctx.ellipse(c, py + TS * 0.46, TS * 0.36, TS * 0.28, 0, Math.PI, 0); ctx.closePath(); ctx.fill(); // cap
+    ctx.strokeStyle = '#8a1d2c'; ctx.lineWidth = Math.max(1.5, TS / 26); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    [[-0.17, 0.36, 0.05], [0.04, 0.27, 0.06], [0.2, 0.38, 0.045], [-0.02, 0.41, 0.035]].forEach(([dx, dy, r]) => {
+      ctx.beginPath(); ctx.arc(c + dx * TS, py + dy * TS, r * TS, 0, 7); ctx.fill();
+    });
+  }
+
+  function drawFeather(px, py) {
+    const c = px + TS / 2, m = py + TS / 2;
+    ctx.fillStyle = '#00000040'; ctx.beginPath(); ctx.ellipse(c, py + TS * 0.84, TS * 0.3, TS * 0.07, 0, 0, 7); ctx.fill();
+    ctx.save(); ctx.translate(c, m); ctx.rotate(-0.7);
+    const g = ctx.createLinearGradient(0, -TS * 0.4, 0, TS * 0.3);
+    g.addColorStop(0, '#5fd3e8'); g.addColorStop(0.6, '#3a7bd5'); g.addColorStop(1, '#6a4bc4');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(0, -TS * 0.42);
+    ctx.quadraticCurveTo(TS * 0.22, -TS * 0.1, TS * 0.03, TS * 0.3);
+    ctx.quadraticCurveTo(-TS * 0.22, -TS * 0.08, 0, -TS * 0.42); ctx.fill();
+    ctx.strokeStyle = '#f3ead8'; ctx.lineWidth = Math.max(1.2, TS / 34);
+    ctx.beginPath(); ctx.moveTo(0, -TS * 0.36); ctx.lineTo(0.01 * TS, TS * 0.42); ctx.stroke(); // quill
+    ctx.strokeStyle = '#ffffff55';
+    for (let k = 0; k < 4; k++) { const yy = -TS * 0.22 + k * TS * 0.1; ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(TS * 0.12, yy - TS * 0.06); ctx.moveTo(0, yy); ctx.lineTo(-TS * 0.12, yy - TS * 0.06); ctx.stroke(); }
+    ctx.restore();
+  }
+
+  function drawBatWing(px, py) {
+    const c = px + TS / 2, m = py + TS * 0.48;
+    ctx.fillStyle = '#00000040'; ctx.beginPath(); ctx.ellipse(c, py + TS * 0.84, TS * 0.34, TS * 0.07, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#3b2b4f'; ctx.strokeStyle = '#1c1328'; ctx.lineWidth = Math.max(1.5, TS / 26);
+    ctx.beginPath();
+    ctx.moveTo(c - TS * 0.36, m - TS * 0.2);              // wrist
+    ctx.quadraticCurveTo(c, m - TS * 0.34, c + TS * 0.38, m - TS * 0.12); // top edge to wing tip
+    ctx.quadraticCurveTo(c + TS * 0.28, m + TS * 0.04, c + TS * 0.3, m + TS * 0.2);
+    ctx.quadraticCurveTo(c + TS * 0.14, m + TS * 0.08, c + TS * 0.06, m + TS * 0.24);
+    ctx.quadraticCurveTo(c - TS * 0.06, m + TS * 0.08, c - TS * 0.18, m + TS * 0.2);
+    ctx.quadraticCurveTo(c - TS * 0.24, m, c - TS * 0.36, m - TS * 0.2);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#6d5a88'; ctx.lineWidth = Math.max(1, TS / 40);
+    ctx.beginPath();
+    ctx.moveTo(c - TS * 0.36, m - TS * 0.2); ctx.lineTo(c + TS * 0.3, m + TS * 0.2);
+    ctx.moveTo(c - TS * 0.36, m - TS * 0.2); ctx.lineTo(c + TS * 0.06, m + TS * 0.24);
+    ctx.moveTo(c - TS * 0.36, m - TS * 0.2); ctx.lineTo(c - TS * 0.18, m + TS * 0.2);
+    ctx.stroke();
+    ctx.fillStyle = '#e8e0f0'; ctx.beginPath(); ctx.moveTo(c - TS * 0.36, m - TS * 0.2); ctx.lineTo(c - TS * 0.42, m - TS * 0.3); ctx.lineTo(c - TS * 0.3, m - TS * 0.24); ctx.fill(); // claw
+  }
+
+  function drawIngredient(o, px, py) {
+    if (o === 't') drawToadstool(px, py); else if (o === 'f') drawFeather(px, py); else drawBatWing(px, py);
+  }
+
+  function drawKey(px, py, t, bobbing = true) {
+    const bob = bobbing ? Math.sin(t / 320) * TS * 0.05 : 0;
+    const c = px + TS / 2, m = py + TS / 2 + bob;
+    if (bobbing) { ctx.fillStyle = '#f2c45a33'; ctx.beginPath(); ctx.arc(c, m, TS * 0.38 + Math.sin(t / 250) * TS * 0.03, 0, 7); ctx.fill(); }
+    ctx.save(); ctx.translate(c, m); ctx.rotate(-0.6);
+    ctx.fillStyle = '#f2c45a'; ctx.strokeStyle = '#a87a22'; ctx.lineWidth = Math.max(1.2, TS / 32);
+    ctx.beginPath(); ctx.arc(-TS * 0.18, 0, TS * 0.13, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#4a3420'; ctx.beginPath(); ctx.arc(-TS * 0.18, 0, TS * 0.05, 0, 7); ctx.fill();
+    ctx.fillStyle = '#f2c45a';
+    ctx.fillRect(-TS * 0.06, -TS * 0.04, TS * 0.38, TS * 0.08); ctx.strokeRect(-TS * 0.06, -TS * 0.04, TS * 0.38, TS * 0.08);
+    ctx.fillRect(TS * 0.2, TS * 0.03, TS * 0.06, TS * 0.1); ctx.fillRect(TS * 0.1, TS * 0.03, TS * 0.05, TS * 0.07);
+    ctx.restore();
+  }
+
+  function drawCauldron(px, py, t, brewed, total) {
+    const c = px + TS / 2, done = brewed >= total;
+    // fire
+    if (!done) for (let k = 0; k < 3; k++) {
+      const fx = c + (k - 1) * TS * 0.16, h = TS * (0.16 + 0.05 * Math.sin(t / 90 + k * 2));
+      ctx.fillStyle = k === 1 ? '#ffd24a' : '#ff7a2a';
+      ctx.beginPath(); ctx.moveTo(fx - TS * 0.07, py + TS * 0.94); ctx.quadraticCurveTo(fx, py + TS * 0.94 - h * 2, fx + TS * 0.07, py + TS * 0.94); ctx.fill();
+    }
+    // pot
+    ctx.fillStyle = '#1e1b22';
+    ctx.beginPath(); ctx.ellipse(c, py + TS * 0.55, TS * 0.42, TS * 0.32, 0, 0, Math.PI); ctx.lineTo(c - TS * 0.42, py + TS * 0.42); ctx.lineTo(c + TS * 0.42, py + TS * 0.42); ctx.fill();
+    ctx.fillStyle = '#2c2833'; ctx.fillRect(c - TS * 0.3, py + TS * 0.82, TS * 0.08, TS * 0.1); ctx.fillRect(c + TS * 0.22, py + TS * 0.82, TS * 0.08, TS * 0.1);
+    ctx.fillStyle = '#ffffff14'; ctx.beginPath(); ctx.ellipse(c - TS * 0.2, py + TS * 0.6, TS * 0.06, TS * 0.14, 0.3, 0, 7); ctx.fill();
+    // rim and brew
+    ctx.fillStyle = '#3a3542'; ctx.beginPath(); ctx.ellipse(c, py + TS * 0.4, TS * 0.44, TS * 0.12, 0, 0, 7); ctx.fill();
+    const brewColor = ['#5aa64a', '#4cc0a0', '#7a6ee0', '#c86fe0'][Math.min(brewed, 3)];
+    ctx.fillStyle = done ? '#4a4452' : brewColor;
+    ctx.beginPath(); ctx.ellipse(c, py + TS * 0.41, TS * 0.36, TS * 0.08, 0, 0, 7); ctx.fill();
+    if (!done) {
+      ctx.fillStyle = '#ffffff66';
+      for (let k = 0; k < 3; k++) {
+        const ph = ((t / 700) + k / 3) % 1;
+        ctx.globalAlpha = 1 - ph;
+        ctx.beginPath(); ctx.arc(c + (k - 1) * TS * 0.15, py + TS * (0.38 - ph * 0.3), TS * (0.03 + ph * 0.04), 0, 7); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    } else {
+      // a little leftover wisp
+      ctx.fillStyle = '#d9d2e622'; ctx.beginPath(); ctx.arc(c + Math.sin(t / 600) * TS * 0.08, py + TS * 0.18, TS * 0.12, 0, 7); ctx.fill();
+    }
+  }
+
+  function drawLockedDoor(px, py) {
+    const m = TS * 0.1;
+    ctx.fillStyle = '#5a3a22'; rr(px + m, py + m * 0.6, TS - m * 2, TS - m * 0.6, TS * 0.06); ctx.fill();
+    ctx.strokeStyle = '#2e1c10'; ctx.lineWidth = Math.max(2, TS / 18); ctx.stroke();
+    ctx.strokeStyle = '#3e2614'; ctx.lineWidth = Math.max(1, TS / 30);
+    for (let k = 1; k < 3; k++) { ctx.beginPath(); ctx.moveTo(px + m + k * (TS - m * 2) / 3, py + m); ctx.lineTo(px + m + k * (TS - m * 2) / 3, py + TS); ctx.stroke(); }
+    ctx.fillStyle = '#4b4f5a'; ctx.fillRect(px + m, py + TS * 0.25, TS - m * 2, TS * 0.07); ctx.fillRect(px + m, py + TS * 0.75, TS - m * 2, TS * 0.07);
+    // keyhole plate
+    ctx.fillStyle = '#f2c45a'; rr(px + TS * 0.36, py + TS * 0.4, TS * 0.28, TS * 0.28, TS * 0.05); ctx.fill();
+    ctx.fillStyle = '#1a1424';
+    ctx.beginPath(); ctx.arc(px + TS / 2, py + TS * 0.5, TS * 0.045, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(px + TS * 0.48, py + TS * 0.52); ctx.lineTo(px + TS * 0.52, py + TS * 0.52); ctx.lineTo(px + TS * 0.54, py + TS * 0.63); ctx.lineTo(px + TS * 0.46, py + TS * 0.63); ctx.fill();
+  }
+
+  // The recipe card under the board, with each ingredient ticked off as it goes in.
+  function drawMenu() {
+    const el = $('menu');
+    const lv = LEVELS[levelIndex];
+    if (!lv || !lv.recipe || !state) { el.hidden = true; return; }
+    el.hidden = false;
+    const done = state.brewed;
+    el.innerHTML = `<span class="menu-title">Menu</span>` + lv.recipe.map((o, k) =>
+      `${k ? '<span class="arrow">→</span>' : ''}<span class="item${k < done ? ' done' : k === done ? ' next' : ''}">
+        <canvas data-ing="${o}" width="64" height="64"></canvas><span>${S.INGREDIENTS[o]}</span>${k < done ? '<b>✓</b>' : ''}</span>`).join('')
+      + `<span class="arrow">=</span><span class="item${done >= lv.recipe.length ? ' made' : ''}"><canvas data-ing="K" width="64" height="64"></canvas><span>key</span></span>`;
+    const saved = ctx, savedTS = TS;
+    el.querySelectorAll('canvas').forEach(cv => {
+      ctx = cv.getContext('2d'); TS = 64;
+      if (cv.dataset.ing === 'K') drawKey(0, 0, 0, false); else drawIngredient(cv.dataset.ing, 0, 0);
+    });
+    ctx = saved; TS = savedTS;
+  }
+
   function draw(t) {
     const s = state, pal = PALETTES[levelIndex];
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -641,6 +821,8 @@
       const px = x * TS, py = y * TS;
       if (f === 'R') drawRock(px, py, x, y);
       else if (f === 'D') drawDoor(px, py, unlocked, t);
+      else if (f === 'C' || f === 'c') drawCauldron(px, py, t, s.brewed, s.recipe.length);
+      else if (f === 'L') drawLockedDoor(px, py);
       else if (f === '_') drawPlate(px, py, s.obj[i] === 'B' || s.hero === i);
       else if (S.GARGOYLES[f]) drawGargoyle(px, py, S.GARGOYLES[f], t);
     }
@@ -662,13 +844,29 @@
       const o = s.obj[i];
       if (!o) continue;
       let px = cx(i) * TS, py = cy(i) * TS;
-      if (o === 'B') {
+      if (S.isIngredient(o)) {
+        if (anim && anim.push && anim.push.to === i) {
+          px = lerp(cx(anim.push.from), cx(i), e) * TS; py = lerp(cy(anim.push.from), cy(i), e) * TS;
+        }
+        drawIngredient(o, px, py);
+      } else if (o === 'K') {
+        if (!(anim && anim.push && anim.push.into && k < 1)) drawKey(px, py, t);
+      } else if (o === 'B') {
         if (anim && anim.push && anim.push.to === i) {
           px = lerp(cx(anim.push.from), cx(i), e) * TS; py = lerp(cy(anim.push.from), cy(i), e) * TS;
         }
         drawCrate(px, py, false);
       } else if (o === '*') drawGem(px, py, t, i);
       else if (o === 'H') drawHammerItem(px, py, t);
+    }
+    // ingredient sliding into the cauldron (it's already gone in the state)
+    if (anim && anim.push && anim.push.into && k < 1) {
+      const sz = 1 - e * 0.5;
+      ctx.save();
+      const ix = lerp(cx(anim.push.from), cx(anim.push.to), e) * TS + TS / 2, iy = lerp(cy(anim.push.from), cy(anim.push.to), e) * TS + TS / 2;
+      ctx.translate(ix, iy); ctx.scale(sz, sz); ctx.translate(-TS / 2, -TS / 2);
+      drawIngredient(anim.push.item, 0, 0);
+      ctx.restore();
     }
     // crate sliding into water (it already became a bridge in the state)
     if (anim && anim.push && s.floor[anim.push.to] === '=' && k < 1) {
@@ -697,9 +895,11 @@
     // particles
     particles = particles.filter(p => p.life > 0);
     for (const p of particles) {
-      p.x += p.vx; p.y += p.vy; p.vy += 0.12; p.life -= 0.025;
+      p.x += p.vx; p.y += p.vy; p.vy += p.g ?? 0.12; p.life -= p.decay ?? 0.025;
       ctx.globalAlpha = Math.max(0, p.life);
-      ctx.fillStyle = p.color; ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+      ctx.fillStyle = p.color;
+      if (p.round) { ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.6 - p.life * 0.6), 0, 7); ctx.fill(); }
+      else ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
     ctx.globalAlpha = 1;
 

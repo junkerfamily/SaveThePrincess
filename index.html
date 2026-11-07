@@ -61,6 +61,21 @@
   #stage { flex: 1 1 auto; width: 100%; display: flex; align-items: center; justify-content: center; min-height: 0; position: relative; }
   #board { display: block; border-radius: 10px; box-shadow: 0 0 0 3px #0008, 0 12px 40px #000a, 0 0 60px #6b4fa033; }
   #hint { max-width: 820px; width: 100%; text-align: center; color: var(--muted); font-size: 14px; min-height: 20px; }
+  #menu {
+    display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap;
+    background: #f3ead8; color: #3a2410; border: 3px solid #a87a22; border-radius: 10px; padding: 5px 12px;
+    font-weight: 800; font-size: 13px; box-shadow: 0 4px 0 #0006; max-width: 100%;
+  }
+  #menu[hidden] { display: none; }
+  #menu .menu-title { font-family: 'Cinzel Decorative', serif; font-size: 15px; color: #7a2a1a; margin-right: 4px; }
+  #menu .item { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px 2px 2px; border-radius: 8px; text-transform: capitalize; }
+  #menu .item canvas { width: 28px; height: 28px; }
+  #menu .item.next { background: #f2c45a66; outline: 2px dashed #a87a22; }
+  #menu .item.done { opacity: .5; text-decoration: line-through; }
+  #menu .item.made { background: #f2c45a; box-shadow: 0 0 12px #f2c45a; }
+  #menu .item b { color: #2f7a2f; text-decoration: none; }
+  #menu .arrow { color: #a87a22; }
+  .stat[hidden] { display: none; }
   #toast {
     position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
     background: #3a1420ee; border: 2px solid var(--danger); color: #ffe1dc; font-weight: 800;
@@ -113,6 +128,10 @@
       <svg viewBox="0 0 20 20"><rect x="9" y="7" width="2.6" height="12" rx="1" fill="#a9763f"/><rect x="4" y="2.5" width="12" height="5.5" rx="1.5" fill="#b9c0cc" stroke="#6d7482"/></svg>
       <span id="swings">0</span>
     </span>
+    <span class="stat" id="keyStat" title="Keys" hidden>
+      <svg viewBox="0 0 20 20"><circle cx="6" cy="10" r="3.6" fill="none" stroke="#f2c45a" stroke-width="2.2"/><path d="M9.5 10h8M15 10v3.5M12.5 10v2.5" stroke="#f2c45a" stroke-width="2.2"/></svg>
+      <span id="keys">0</span>
+    </span>
     <span class="stat" title="Moves">
       <svg viewBox="0 0 20 20"><path d="M6 17c-2 0-3-1.5-2.5-3.2L5 9h4l-.8 5c-.3 2-1.2 3-2.2 3zm8-6c-1 0-1.9-1-2.2-3L11 3h4l1.5 4.8C17 9.5 16 11 14 11z" fill="#b8a9cf"/></svg>
       <span id="moves">0</span>
@@ -128,6 +147,7 @@
     <canvas id="board"></canvas>
     <div id="toast"></div>
   </div>
+  <div id="menu" hidden></div>
   <div id="hint"></div>
   <div id="pad">
     <div class="dpad">

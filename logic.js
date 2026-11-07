@@ -7,11 +7,20 @@
 //   S  Sabrina (final exit)               _  pressure plate
 //   |  gate (open while any plate is held down)
 //   ^ v < >  gargoyle, glaring in that direction
+//   C  cauldron        t f w  ingredients: toadstool, feather, bat wing (push them like crates)
+//   L  locked door (needs a key)          K  key
+//
+// A level with a cauldron lists its recipe, e.g. recipe: ['t', 'f', 'w'].
+// Push the ingredients into the cauldron in that order. The last one brews a key,
+// which pops out right where the hero is standing.
 
 (function (root) {
   const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
   const DIR_LIST = ['up', 'down', 'left', 'right'];
   const GARGOYLES = { '^': 'up', 'v': 'down', '<': 'left', '>': 'right' };
+  const INGREDIENTS = { t: 'toadstool', f: 'feather', w: 'bat wing' };
+  const isIngredient = o => o === 't' || o === 'f' || o === 'w';
+  const isPushable = o => o === 'B' || isIngredient(o);
 
   function parse(level) {
     const rows = level.map;
@@ -28,6 +37,8 @@
           case 'B': o = 'B'; break;
           case '*': o = '*'; gems++; break;
           case 'H': o = 'H'; break;
+          case 'K': o = 'K'; break;
+          case 't': case 'f': case 'w': o = c; break;
           case 'P': f = '_'; o = 'B'; break; // crate already on a plate
           case ' ': f = '#'; break;
           case '.': break;
@@ -41,6 +52,7 @@
       swings: level.swings ?? 0,
       hammerSwings: level.hammerSwings ?? 2,
       gemsLeft: gems, gemsTotal: gems,
+      keys: 0, recipe: level.recipe || [], brewed: 0,
       moves: 0, dead: false, won: false,
     };
   }
@@ -73,7 +85,15 @@
     if (f === '.' || f === '=' || f === '_') return true;
     if (f === '|') return gateOpen(s, i, held);
     if (f === 'D' || f === 'S') return s.gemsLeft === 0;
+    if (f === 'L') return s.keys > 0;
     return false;
+  }
+
+  // Ingredients slide over floor and bridges, but won't go in water or onto plates.
+  function ingredientCanEnter(s, i) {
+    if (s.obj[i] !== '') return false;
+    const f = s.floor[i];
+    return f === '.' || f === '=';
   }
 
   function crateCanEnter(s, i, held) {
@@ -85,7 +105,7 @@
   }
 
   function blocksBeam(s, i, held) {
-    if (s.obj[i] === 'B') return true;
+    if (isPushable(s.obj[i])) return true;
     const f = s.floor[i];
     if (f === '|') return !gateOpen(s, i, held);
     return !(f === '.' || f === '=' || f === '_' || f === '~');
@@ -130,7 +150,29 @@
     if (t < 0) return { state: n, moved: false, events: ['bump'] };
     const held = platesHeld(n);
 
-    if (n.obj[t] === 'B') {
+    if (isIngredient(n.obj[t])) {
+      const item = n.obj[t];
+      const t2 = neighbor(n, t, dir);
+      if (t2 >= 0 && n.floor[t2] === 'C') {
+        const need = n.recipe[n.brewed];
+        if (item !== need) return { state: n, moved: false, events: ['fizzle'], wrong: item, need };
+        n.obj[t] = '';
+        n.brewed++;
+        events.push('plop');
+        if (n.brewed === n.recipe.length) {
+          n.floor[t2] = 'c'; // brewed: still in the way, but done bubbling
+          n.obj[t] = 'K';    // the key pops out where the hero is about to stand
+          events.push('brew');
+        }
+        push = { from: t, to: t2, item, into: true };
+      } else {
+        if (t2 < 0 || !ingredientCanEnter(n, t2)) return { state: n, moved: false, events: ['bump'] };
+        n.obj[t] = '';
+        n.obj[t2] = item;
+        events.push('push');
+        push = { from: t, to: t2, item };
+      }
+    } else if (n.obj[t] === 'B') {
       const t2 = neighbor(n, t, dir);
       if (t2 < 0 || !crateCanEnter(n, t2, held)) return { state: n, moved: false, events: ['bump'] };
       n.obj[t] = '';
@@ -141,7 +183,7 @@
         n.obj[t2] = 'B';
         events.push('push');
       }
-      push = { from: t, to: t2 };
+      push = { from: t, to: t2, item: 'B' };
     } else if (!heroCanEnter(n, t, held)) {
       return { state: n, moved: false, events: ['bump'] };
     }
@@ -157,6 +199,15 @@
       n.obj[t] = '';
       n.swings += n.hammerSwings;
       events.push('hammer');
+    } else if (n.obj[t] === 'K') {
+      n.obj[t] = '';
+      n.keys++;
+      events.push('key');
+    }
+    if (n.floor[t] === 'L') {
+      n.floor[t] = '.';
+      n.keys--;
+      events.push('unlockdoor');
     }
     if (n.floor[t] === 'D' || n.floor[t] === 'S') {
       n.won = true;
@@ -186,7 +237,7 @@
 
   const LEVELS = [];
 
-  const api = { DIRS, DIR_LIST, GARGOYLES, LEVELS, parse, clone, step, smash, beams, beamSegments, platesHeld, gateOpen, neighbor };
+  const api = { DIRS, DIR_LIST, GARGOYLES, INGREDIENTS, isIngredient, isPushable, LEVELS, parse, clone, step, smash, beams, beamSegments, platesHeld, gateOpen, neighbor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Sabrina = api;
 })(this);

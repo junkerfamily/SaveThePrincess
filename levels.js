@@ -1,4 +1,4 @@
-// The five floors of Thornspire Tower. See logic.js for the map legend.
+// The six floors of Thornspire Tower. See logic.js for the map legend.
 (function (root) {
   const LEVELS = [
     {
@@ -58,6 +58,22 @@
         '#.....#.....#',
         '#.##.##.###.#',
         '#*..B....B.D#',
+        '#############',
+      ],
+    },
+    {
+      name: 'The Witch’s Kitchen',
+      hint: 'Brew the recipe on the menu! Push each ingredient into the cauldron, in order, to make a key.',
+      recipe: ['t', 'f', 'w'],
+      map: [
+        '#############',
+        '#@...#..*...#',
+        '#.tf.#.###..#',
+        '#....L...*..#',
+        '##.##########',
+        '#*..........#',
+        '#.w.......*.#',
+        '#....#C#..D.#',
         '#############',
       ],
     },
