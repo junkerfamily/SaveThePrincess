@@ -993,7 +993,16 @@
   });
 
   // ---------- boot ----------
-  loadLevel(Math.min(progress.unlocked, LEVELS.length) - 1);
-  showTitle();
+  // Shortcut: add ?floor=5 (or #floor=5) to the address to jump straight to that floor.
+  // It also unlocks every floor up to that one in the floor picker.
+  const jump = parseInt(new URLSearchParams(location.search).get('floor') ?? (location.hash.match(/floor=(\d+)/) || [])[1], 10);
+  if (jump >= 1 && jump <= LEVELS.length) {
+    progress.unlocked = Math.max(progress.unlocked, jump);
+    store.set('sabrina.progress', progress);
+    startFloor(jump - 1);
+  } else {
+    loadLevel(Math.min(progress.unlocked, LEVELS.length) - 1);
+    showTitle();
+  }
   requestAnimationFrame(frame);
 })();

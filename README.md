@@ -10,3 +10,12 @@ Princess Sabrina is locked at the top of Thornspire Tower. Climb six floors of p
 - `logic.js`: game rules (no DOM, so it can run in Node)
 - `levels.js`: the six floors, drawn as text maps (legend at the top of `logic.js`)
 - `game.js`: drawing, sound, input and screens
+
+## Jumping to a floor
+
+Add `?floor=` and a floor number to the address to go straight to that floor, for testing or for skipping ahead:
+
+- https://junkerfamily.github.io/SaveThePrincess/?floor=5 (the Witch's Kitchen)
+- https://junkerfamily.github.io/SaveThePrincess/?floor=6 (Sabrina's Chamber)
+
+It also unlocks every floor up to that one in the floor picker on that device.
