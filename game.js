@@ -118,10 +118,17 @@
     history = [];
     anim = null; queued = null; particles = [];
     zapAt = 0; wonAt = 0;
+    climb = null;
+    if (tHero.floor !== i) { tHero.floor = i; tHero.u = null; } // jumped floors: no walk, just appear
+    drawMenu(); // before resize, since the recipe card takes room from the board
     resize();
     updateHud();
     $('hint').textContent = LEVELS[i].hint;
-    drawMenu();
+  }
+
+  // Put the tower hero back on the current floor (after an undo or restart cancels a climb).
+  function resetTowerHero() {
+    if (climb || tHero.floor !== levelIndex) { climb = null; tHero.floor = levelIndex; tHero.u = null; }
   }
 
   function commit(result, kind) {
@@ -160,7 +167,17 @@
     if (state.won) {
       wonAt = now;
       recordBest();
-      setTimeout(() => { if (state.won) levelIndex === LEVELS.length - 1 ? showFinale() : showClear(); }, 900);
+      const last = levelIndex === LEVELS.length - 1, won = state;
+      if (last || !towerShown) {
+        setTimeout(() => { if (state === won) last ? showFinale() : showClear(); }, 900);
+      } else {
+        // Watch the little hero climb the stairs in the tower, then show the card.
+        setTimeout(() => {
+          if (state !== won || screen !== 'play') return;
+          const ms = startClimb();
+          setTimeout(() => { if (state === won && screen === 'play') showClear(); }, ms + 350);
+        }, 450);
+      }
     }
     play(result.events);
     updateHud();
@@ -196,6 +213,7 @@
     if (screen !== 'play' || !history.length) return;
     state = history.pop();
     anim = null; queued = null; zapAt = 0; wonAt = 0;
+    resetTowerHero();
     hideToast();
     tone(500, 0.06, 'triangle', 0.04, 0, 300);
     updateHud(); drawMenu();
@@ -207,6 +225,7 @@
     if (state.moves > 0) history.push(state); // restart can itself be undone
     state = fresh;
     anim = null; queued = null; particles = []; zapAt = 0; wonAt = 0;
+    resetTowerHero();
     hideToast();
     tone(300, 0.1, 'triangle', 0.04, 0, 600);
     updateHud(); drawMenu();
@@ -366,16 +385,31 @@
   }
 
   // ---------- drawing ----------
+  const TOWER_GAP = 14;
+  const fitTS = (w, h) => Math.max(20, Math.min(64, Math.floor(Math.min(w / state.w, h / state.h))));
   function resize() {
     if (!state) return;
     const stage = $('stage');
     const availW = stage.clientWidth - 8, availH = stage.clientHeight - 8;
-    TS = Math.max(20, Math.min(64, Math.floor(Math.min(availW / state.w, availH / state.h))));
+    const full = fitTS(availW, availH);
+    // Show the tower beside the board only when the board can stay a good size.
+    const tw = Math.round(Math.min(190, Math.max(120, availH * 0.3)));
+    const roomW = availW - tw - TOWER_GAP;
+    const withTower = fitTS(roomW, availH);
+    towerShown = availH >= 240 && withTower >= Math.min(full, 38) && roomW >= state.w * withTower;
+    TS = towerShown ? withTower : full;
     dpr = window.devicePixelRatio || 1;
     canvas.width = state.w * TS * dpr;
     canvas.height = state.h * TS * dpr;
     canvas.style.width = state.w * TS + 'px';
     canvas.style.height = state.h * TS + 'px';
+    towerCanvas.classList.toggle('show', towerShown);
+    if (towerShown) {
+      towerW = tw;
+      towerH = Math.round(Math.min(availH, Math.max(state.h * TS, 360, tw * 3.2)));
+      towerCanvas.width = towerW * dpr; towerCanvas.height = towerH * dpr;
+      towerCanvas.style.width = towerW + 'px'; towerCanvas.style.height = towerH + 'px';
+    }
   }
   window.addEventListener('resize', resize);
 
@@ -881,6 +915,7 @@
     // hero
     let hx = cx(s.hero), hy = cy(s.hero);
     if (anim) { hx = lerp(cx(anim.from), hx, e); hy = lerp(cy(anim.from), hy, e); }
+    heroCol = hx;
     const swing = Math.max(0, 1 - (t - swingAnim) / 220);
     const heroX = (hx + 0.5) * TS, heroY = (hy + 0.5) * TS - (anim ? Math.sin(e * Math.PI) * TS * 0.06 : 0);
     if (s.won && s.floor[s.hero] === 'S') {
@@ -932,6 +967,215 @@
     ctx = boardCtx;
   }
 
+
+  // ---------- tower view ----------
+  // A cutaway of Thornspire Tower beside the board: every floor, the stairs between them,
+  // and a little hero who walks along with you and climbs up when a floor is cleared.
+  const towerCanvas = $('tower');
+  const towerCtx = towerCanvas.getContext('2d');
+  let towerShown = false, towerW = 0, towerH = 0;
+  let heroCol = 1;                                   // hero's column on the board, mid-tween
+  const tHero = { floor: -1, u: null, dir: 'right', lastT: 0 }; // u = 0..1 across the floor
+  let climb = null;
+  const CLIMB_UP_MS = 1100, CLIMB_OFF_MS = 260;
+
+  // Stairs on even floors hug the right wall and rise leftwards; odd floors mirror that.
+  const stairOf = i => i % 2 === 0
+    ? { bottom: 0.93, top: 0.7, land: 0.62, hole: [0.68, 1] }
+    : { bottom: 0.07, top: 0.3, land: 0.38, hole: [0, 0.32] };
+  // Where the hero can stand on floor i (not over the stairwell coming up from below).
+  function walkRange(i) {
+    if (i === 0) return [0.1, 0.9];
+    return (i - 1) % 2 === 0 ? [0.1, 0.64] : [0.36, 0.9];
+  }
+  function colToU(i, col, w) {
+    const [lo, hi] = walkRange(i);
+    return lerp(lo, hi, Math.max(0, Math.min(1, (col - 1) / (w - 3))));
+  }
+  const SABRINA_U = (() => {
+    const last = LEVELS.length - 1, map = LEVELS[last].map;
+    for (const row of map) { const c = row.indexOf('S'); if (c >= 0) return colToU(last, c, row.length); }
+    return 0.5;
+  })();
+
+  function towerLayout() {
+    const W = towerW, H = towerH;
+    const ground = H * 0.05, roof = H * 0.17;
+    const pad = Math.round(W * 0.05), wt = Math.max(6, Math.round(W * 0.06));
+    const fh = (H - ground - roof) / LEVELS.length;
+    const ix0 = pad + wt, ix1 = W - pad - wt, iw = ix1 - ix0;
+    const st = Math.max(3, fh * 0.08);
+    return {
+      W, H, ground, roof, pad, wt, fh, ix0, ix1, iw, st,
+      top: i => H - ground - (i + 1) * fh,          // top edge of floor i's band
+      floorY: i => H - ground - i * fh - st,        // where feet stand on floor i
+      X: u => ix0 + u * iw,
+    };
+  }
+
+  function startClimb() {
+    const i = levelIndex, sp = stairOf(i);
+    const u0 = tHero.u ?? sp.bottom;
+    const walk = Math.max(150, Math.abs(u0 - sp.bottom) * 1100);
+    climb = { floor: i, start: performance.now(), u0, walk, sp };
+    for (let k = 0; k < 6; k++) tone(330 + k * 55, 0.06, 'triangle', 0.04, (walk + (k + 0.6) * CLIMB_UP_MS / 6) / 1000);
+    return walk + CLIMB_UP_MS + CLIMB_OFF_MS;
+  }
+
+  // Where the tower hero is this frame: { floor, u, y (feet), dir, walking }.
+  function towerHeroPose(t, L) {
+    if (climb) {
+      const c = climb, sp = c.sp, el = t - c.start, i = c.floor;
+      if (el < c.walk) {
+        const p = el / c.walk;
+        return { floor: i, u: lerp(c.u0, sp.bottom, p), y: L.floorY(i), dir: sp.bottom > c.u0 ? 'right' : 'left', walking: true };
+      }
+      if (el < c.walk + CLIMB_UP_MS) {
+        const p = (el - c.walk) / CLIMB_UP_MS, n = 6;
+        const q = (Math.floor(p * n) + ease((p * n) % 1)) / n; // step by step
+        return { floor: i, u: lerp(sp.bottom, sp.top, q), y: lerp(L.floorY(i), L.floorY(i + 1), q), dir: sp.top > sp.bottom ? 'right' : 'left', walking: true };
+      }
+      if (el < c.walk + CLIMB_UP_MS + CLIMB_OFF_MS) {
+        const p = (el - c.walk - CLIMB_UP_MS) / CLIMB_OFF_MS;
+        return { floor: i + 1, u: lerp(sp.top, sp.land, p), y: L.floorY(i + 1), dir: sp.land > sp.top ? 'right' : 'left', walking: true };
+      }
+      tHero.floor = i + 1; tHero.u = sp.land; tHero.dir = sp.land > sp.top ? 'right' : 'left';
+      climb = null;
+    }
+    // Follow the hero on the board, easing so steps look like walking.
+    const f = tHero.floor;
+    let target = tHero.u ?? 0.5;
+    if (f === levelIndex) target = colToU(f, heroCol, state.w);
+    if (tHero.u == null) tHero.u = target;
+    const dt = Math.min(100, t - (tHero.lastT || t));
+    const d = target - tHero.u;
+    tHero.u += d * (1 - Math.exp(-dt / 70));
+    const walking = Math.abs(d) > 0.004;
+    if (walking) tHero.dir = d > 0 ? 'right' : 'left';
+    else if (f === levelIndex && state.dir !== tHero.dir && !state.won) tHero.dir = state.dir;
+    return { floor: f, u: tHero.u, y: L.floorY(f), dir: tHero.dir, walking };
+  }
+
+  function drawTowerStairs(L, i) {
+    const sp = stairOf(i);
+    const xb = L.X(sp.bottom + (sp.bottom > sp.top ? 0.05 : -0.05)), xt = L.X(sp.top);
+    const yb = L.floorY(i), yt = L.floorY(i + 1), n = 6;
+    const xs = k => lerp(xb, xt, k / n), ys = k => lerp(yb, yt, k / n);
+    // treads and risers
+    ctx.fillStyle = '#8a5a33';
+    ctx.beginPath(); ctx.moveTo(xb, yb);
+    for (let k = 1; k <= n; k++) { ctx.lineTo(xs(k - 1), ys(k)); ctx.lineTo(xs(k), ys(k)); }
+    const thick = L.fh * 0.12;
+    ctx.lineTo(xt, yt + thick); ctx.lineTo(xb + (xt - xb) * 0.12, yb); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#4a2f1a'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#c08a52';
+    for (let k = 1; k <= n; k++) ctx.fillRect(Math.min(xs(k - 1), xs(k)), ys(k), Math.abs(xs(k) - xs(k - 1)), Math.max(1.5, L.fh * 0.025));
+  }
+
+  function drawTower(t) {
+    const L = towerLayout();
+    const n = LEVELS.length;
+    ctx = towerCtx;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, L.W, L.H);
+    const pose = towerHeroPose(t, L);
+    const here = pose.floor;
+    const reached = Math.max(progress.unlocked - 1, levelIndex, here);
+
+    // back walls, seen through the cutaway
+    for (let i = 0; i < n; i++) {
+      const y0 = L.top(i), pal = PALETTES[i] || PALETTES[0];
+      ctx.fillStyle = pal.wall; ctx.fillRect(L.ix0, y0, L.iw, L.fh);
+      ctx.fillStyle = pal.mortar;
+      const rows = 4, bh = L.fh / rows, bw = Math.max(14, L.iw / 6);
+      for (let r = 0; r < rows; r++) {
+        const yy = y0 + r * bh;
+        ctx.fillRect(L.ix0, yy, L.iw, 1);
+        for (let x = L.ix0 + (r % 2 ? bw / 2 : 0); x < L.ix1; x += bw) ctx.fillRect(x, yy, 1, bh);
+      }
+      // arched window with a bit of night sky
+      const ww = Math.min(L.iw * 0.13, L.fh * 0.26), wh = ww * 1.4, wx = L.X(0.5) - ww / 2, wy = y0 + L.fh * 0.14;
+      ctx.beginPath(); ctx.moveTo(wx, wy + wh); ctx.lineTo(wx, wy + ww / 2); ctx.arc(wx + ww / 2, wy + ww / 2, ww / 2, Math.PI, 0); ctx.lineTo(wx + ww, wy + wh); ctx.closePath();
+      ctx.fillStyle = '#18214d'; ctx.fill();
+      ctx.strokeStyle = pal.hi; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#fff9'; ctx.fillRect(wx + ww * (0.25 + 0.4 * hash(i, 3)), wy + wh * (0.3 + 0.3 * hash(3, i)), 1.5, 1.5);
+      // a warm torch glow on the floor the hero is on
+      if (i === here) {
+        const g = ctx.createRadialGradient(L.X(0.5), y0 + L.fh * 0.5, 2, L.X(0.5), y0 + L.fh * 0.5, L.iw * 0.6);
+        g.addColorStop(0, `rgba(242,196,90,${0.28 + 0.05 * Math.sin(t / 300)})`); g.addColorStop(1, 'rgba(242,196,90,0)');
+        ctx.fillStyle = g; ctx.fillRect(L.ix0, y0, L.iw, L.fh);
+      }
+    }
+
+    for (let i = 0; i < n - 1; i++) drawTowerStairs(L, i);
+
+    // floor slabs, with an opening where the stairs come up
+    for (let i = 0; i < n; i++) {
+      const y = L.floorY(i), pal = PALETTES[i] || PALETTES[0];
+      const segs = i === 0 ? [[0, 1]] : (() => { const h = stairOf(i - 1).hole; return h[0] === 0 ? [[h[1], 1]] : [[0, h[0]]]; })();
+      for (const [a, b] of segs) {
+        ctx.fillStyle = '#251d33'; ctx.fillRect(L.X(a), y, L.X(b) - L.X(a), L.st);
+        ctx.fillStyle = pal.hi; ctx.fillRect(L.X(a), y, L.X(b) - L.X(a), 1.5);
+      }
+    }
+
+    // floors not reached yet sit in shadow
+    for (let i = reached + 1; i < n; i++) {
+      ctx.fillStyle = 'rgba(10,7,20,0.6)'; ctx.fillRect(L.ix0, L.top(i), L.iw, L.fh);
+    }
+
+    // floor numbers, with a tick for floors already cleared
+    ctx.font = `800 ${Math.max(10, Math.round(L.fh * 0.2))}px Nunito, system-ui, sans-serif`;
+    ctx.textBaseline = 'top';
+    for (let i = 0; i < n; i++) {
+      const done = progress.best[String(i)] != null;
+      ctx.fillStyle = i === here ? '#f2c45a' : i <= reached ? '#d8cbe8' : '#8a7ca2';
+      const label = String(i + 1) + (done ? ' ✓' : '');
+      const lx = i % 2 === 0 ? L.ix0 + 4 : L.ix1 - 4 - ctx.measureText(label).width;
+      ctx.fillText(label, lx, L.top(i) + 4);
+    }
+
+    // outer walls, cut open so we can see inside
+    for (const x of [L.pad, L.ix1]) {
+      ctx.fillStyle = '#3d3058'; ctx.fillRect(x, L.roof, L.wt, L.H - L.roof - L.ground);
+      ctx.fillStyle = '#2a2142';
+      for (let y = L.roof + 6; y < L.H - L.ground; y += 10) ctx.fillRect(x, y, L.wt, 1);
+      ctx.fillStyle = '#5a4a7a'; ctx.fillRect(x === L.pad ? x + L.wt - 1.5 : x, L.roof, 1.5, L.H - L.roof - L.ground);
+    }
+
+    // roof and flag
+    const apexY = L.roof * 0.28, ledge = 6;
+    ctx.fillStyle = '#5a4a7a'; ctx.fillRect(2, L.roof - ledge, L.W - 4, ledge + 1);
+    ctx.fillStyle = '#c04a6a';
+    ctx.beginPath(); ctx.moveTo(L.pad * 0.6, L.roof - ledge); ctx.lineTo(L.W / 2, apexY); ctx.lineTo(L.W - L.pad * 0.6, L.roof - ledge); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#9c3654';
+    ctx.beginPath(); ctx.moveTo(L.W / 2, apexY); ctx.lineTo(L.W - L.pad * 0.6, L.roof - ledge); ctx.lineTo(L.W / 2, L.roof - ledge); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#f2c45a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(L.W / 2, apexY); ctx.lineTo(L.W / 2, 2); ctx.stroke();
+    const wave = Math.sin(t / 260);
+    ctx.fillStyle = '#ff6f98';
+    ctx.beginPath(); ctx.moveTo(L.W / 2, 3); ctx.quadraticCurveTo(L.W / 2 + 10, 3 + wave * 3, L.W / 2 + 20, 7 + wave * 2); ctx.quadraticCurveTo(L.W / 2 + 10, 10 + wave * 3, L.W / 2, 12); ctx.closePath(); ctx.fill();
+
+    // ground
+    ctx.fillStyle = '#1b1430';
+    ctx.beginPath(); ctx.moveTo(0, L.H); ctx.lineTo(0, L.H - L.ground * 0.5); ctx.quadraticCurveTo(L.W / 2, L.H - L.ground * 1.5, L.W, L.H - L.ground * 0.5); ctx.lineTo(L.W, L.H); ctx.closePath(); ctx.fill();
+
+    // Sabrina waits on the top floor; the hero joins her when she's saved
+    const s = L.fh * 0.62, last = n - 1;
+    const together = here === last && levelIndex === last && state.won && state.floor[state.hero] === 'S';
+    if (together) {
+      const x = L.X(pose.u);
+      drawSabrina(x + s * 0.24, L.floorY(last) - s * 0.38, s, t, true);
+      drawHero(x - s * 0.24, pose.y - s * 0.36, 'right', s, t, {});
+    } else {
+      drawSabrina(L.X(SABRINA_U), L.floorY(last) - s * 0.38, s, t, here === last);
+      drawHero(L.X(pose.u), pose.y - s * 0.36, pose.dir, s, t, { walking: pose.walking });
+    }
+
+    tHero.lastT = t;
+    ctx = boardCtx;
+  }
+
   function runQueued() {
     if (!queued) return;
     const q = queued; queued = null;
@@ -939,7 +1183,7 @@
   }
 
   function frame(t) {
-    if (state) draw(t);
+    if (state) { draw(t); if (towerShown) drawTower(t); }
     if (screen === 'finale') drawFinale(t);
     requestAnimationFrame(frame);
   }

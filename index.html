@@ -58,7 +58,9 @@
   button.primary:hover { background: linear-gradient(#ffd97a, #e3b048); }
   .kbd { opacity: .6; font-weight: 400; font-size: 12px; margin-left: 3px; }
 
-  #stage { flex: 1 1 auto; width: 100%; display: flex; align-items: center; justify-content: center; min-height: 0; position: relative; }
+  #stage { flex: 1 1 auto; width: 100%; display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 0; position: relative; }
+  #tower { display: none; flex: none; }
+  #tower.show { display: block; }
   #board { display: block; border-radius: 10px; box-shadow: 0 0 0 3px #0008, 0 12px 40px #000a, 0 0 60px #6b4fa033; }
   #hint { max-width: 820px; width: 100%; text-align: center; color: var(--muted); font-size: 14px; min-height: 20px; }
   #menu {
@@ -144,6 +146,7 @@
     </div>
   </div>
   <div id="stage">
+    <canvas id="tower" aria-hidden="true"></canvas>
     <canvas id="board"></canvas>
     <div id="toast"></div>
   </div>
