@@ -13,7 +13,10 @@
 //   U  stairs back up (out of the basement)
 //   X  dragon (a block of X cells). It breathes fire out of its front, across every row
 //      it covers, on every `breath`-th move (default 3). Smoke curls up one move before.
-//      Crates block the flames, just like a gargoyle's glare.
+//      Crates block the flames, just like a gargoyle's glare. Jam a crate right in front of
+//      every row and the dragon chokes on its own smoke: it never breathes again, and a magic
+//      key (M) appears at the level's `prize` spot ([x, y]), or the nearest free floor to it.
+//   M  magic key      J  gem-covered chest (opens with the magic key)   j  opened chest
 //
 // A level with a cauldron lists its recipe, e.g. recipe: ['t', 'f', 'w'].
 // Push the ingredients into the cauldron in that order. The last one brews a key:
@@ -43,6 +46,7 @@
           case '*': o = '*'; gems++; break;
           case 'H': o = 'H'; break;
           case 'K': o = 'K'; break;
+          case 'M': o = 'M'; break;
           case 't': case 'f': case 'w': o = c; break;
           case 'P': f = '_'; o = 'B'; break; // crate already on a plate
           case 'Q': f = 'T'; o = 'B'; break; // crate hiding a trapdoor
@@ -69,6 +73,7 @@
       hammerSwings: level.hammerSwings ?? 2,
       gemsLeft: gems, gemsTotal: gems,
       keys: 0, recipe: level.recipe || [], brewed: 0, dragon,
+      choked: false, magicKey: false, prize: level.prize ? level.prize[1] * w + level.prize[0] : -1,
       moves: 0, dead: false, won: false,
     };
   }
@@ -155,6 +160,7 @@
   // Where the dragon is in its breathing cycle: 'calm', 'smoke' (fire next move) or 'fire'.
   function dragonPhase(s) {
     if (!s.dragon) return null;
+    if (s.choked) return 'calm'; // smoked out: asleep for good
     const p = s.moves % s.dragon.breath;
     return p === s.dragon.breath - 1 ? 'fire' : p === s.dragon.breath - 2 ? 'smoke' : 'calm';
   }
@@ -193,7 +199,28 @@
     else if (flames(s).has(s.hero)) { s.dead = true; s.deathBy = 'burn'; }
   }
 
+  // Free floor nearest to cell i (for dropping the magic key somewhere you can reach).
+  function nearestFree(s, i) {
+    const seen = new Set([i]), q = [i];
+    while (q.length) {
+      const c = q.shift();
+      if ((s.floor[c] === '.' || s.floor[c] === '=') && !s.obj[c] && c !== s.hero) return c;
+      for (const d of DIR_LIST) {
+        const nb = neighbor(s, c, d);
+        if (nb >= 0 && !seen.has(nb) && s.floor[nb] !== '#') { seen.add(nb); q.push(nb); }
+      }
+    }
+    return -1;
+  }
+
   function dragonEvents(n, events) {
+    if (n.dragon && !n.choked && flameLanes(n).every(l => l.length === 0)) {
+      n.choked = true;
+      const at = n.prize >= 0 ? nearestFree(n, n.prize) : -1;
+      if (at >= 0) n.obj[at] = 'M';
+      n.prizeCell = at;
+      events.push('choke');
+    }
     const p = dragonPhase(n);
     if (p === 'fire') events.push('flame');
     else if (p === 'smoke') events.push('growl');
@@ -243,6 +270,13 @@
         events.push('push');
       }
       push = { from: t, to: t2, item: 'B' };
+    } else if (n.floor[t] === 'J') {
+      // The gem-covered chest: the magic key opens it (that takes a move; you stay put).
+      if (!n.magicKey) return { state: n, moved: false, events: ['chestlocked'] };
+      n.floor[t] = 'j';
+      n.moves++;
+      checkDeath(n);
+      return { state: n, moved: true, events: ['chest'], from: n.hero, opened: t };
     } else if (!heroCanEnter(n, t, held)) {
       return { state: n, moved: false, events: ['bump'] };
     }
@@ -262,6 +296,10 @@
       n.obj[t] = '';
       n.keys++;
       events.push('key');
+    } else if (n.obj[t] === 'M') {
+      n.obj[t] = '';
+      n.magicKey = true;
+      events.push('magickey');
     }
     if (n.floor[t] === 'L') {
       n.floor[t] = '.';

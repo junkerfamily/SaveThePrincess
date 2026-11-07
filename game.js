@@ -35,6 +35,8 @@
   let zapAt = 0;
   let wonAt = 0;
   let brew = null;       // { at, cell }: the cauldron fading into a key behind the smoke
+  let prizeAnim = null;  // { at, cell }: the magic key popping out of the dragon's smoke
+  let plumeAt = 0;       // when the dragon choked (the room fills with smoke)
   const BREW_MS = 1300;
   let TS = 48, dpr = 1;
   const MOVE_MS = 110;
@@ -141,6 +143,15 @@
     brew: () => { noise(0.9, 0.35, 900, 0.15); [392, 494, 587, 784].forEach((f, i) => tone(f, 0.25, 'sine', 0.06, 0.3 + i * 0.09)); },
     fizzle: () => { noise(0.3, 0.18, 2500); tone(220, 0.2, 'sawtooth', 0.03, 0, 110); },
     key: () => { tone(1319, 0.08, 'triangle', 0.05); tone(1760, 0.18, 'triangle', 0.05, 0.08); },
+    choke: () => { // a long inhale, a big cough, then a sleepy rumble
+      noise(0.9, 0.35, 900); tone(120, 0.9, 'sawtooth', 0.04, 0, 520);
+      noise(0.35, 0.6, 1500, 1.0); tone(180, 0.3, 'square', 0.06, 1.0, 60);
+      noise(1.4, 0.3, 500, 1.3); tone(55, 1.2, 'sine', 0.08, 1.4, 40);
+    },
+    magicappear: () => [784, 988, 1175, 1568, 1976].forEach((f, i) => tone(f, 0.35, 'sine', 0.05, i * 0.07)),
+    magickey: () => [1047, 1319, 1568, 2093].forEach((f, i) => tone(f, 0.25, 'triangle', 0.05, i * 0.06)),
+    chestlocked: () => { tone(140, 0.08, 'square', 0.05); tone(2200, 0.2, 'sine', 0.015, 0.05); },
+    chest: () => { tone(240, 0.4, 'sawtooth', 0.025, 0, 380); [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, 0.4, 'triangle', 0.06, 0.35 + i * 0.09)); },
     unlockdoor: () => { tone(180, 0.06, 'square', 0.05); tone(260, 0.06, 'square', 0.05, 0.07); [523, 784].forEach((f, i) => tone(f, 0.2, 'triangle', 0.06, 0.16 + i * 0.1)); },
     trapdoor: () => { tone(320, 0.35, 'sawtooth', 0.025, 0, 170); noise(0.25, 0.2, 400, 0.2); tone(70, 0.3, 'sine', 0.08, 0.2); },
     growl: () => { tone(62, 0.5, 'sawtooth', 0.05, 0, 48); noise(0.5, 0.12, 250); },
@@ -164,12 +175,20 @@
   }
 
   // ---------- level flow ----------
+  // A fresh copy of a floor, carrying the magic key (and an already-opened chest) from your save.
+  function freshState(i) {
+    const s = S.parse(levelOf(i));
+    if (i !== BASEMENT) s.magicKey = !!progress.magicKey;
+    if (progress.map) s.floor = s.floor.map(f => (f === 'J' ? 'j' : f));
+    return s;
+  }
+
   function loadLevel(i) {
     levelIndex = i;
-    state = S.parse(levelOf(i));
+    state = freshState(i);
     history = [];
     anim = null; queued = null; particles = [];
-    zapAt = 0; wonAt = 0; brew = null;
+    zapAt = 0; wonAt = 0; brew = null; prizeAnim = null; plumeAt = 0;
     climb = null;
     if (tHero.floor !== i) { tHero.floor = i; tHero.u = null; } // jumped floors: no walk, just appear
     drawMenu(); // before resize, since the recipe card takes room from the board
@@ -209,6 +228,26 @@
       puff(result.push.to);
       brew = { at: now, cell: result.push.to };
       showToast('POOF! The cauldron turned into a key. Go grab it!', false, 2400);
+    }
+    if (result.events.includes('choke')) {
+      plume();
+      plumeAt = now;
+      if (state.prizeCell >= 0) {
+        prizeAnim = { at: now, cell: state.prizeCell };
+        setTimeout(() => { if (prizeAnim && prizeAnim.at === now) { burst(state.prizeCell, ['#9fe8ff', '#d6b8ff', '#fff'], 22, 3); SFX.magicappear(); } }, 1500);
+      }
+      showToast('The dragon inhales its own smoke… *COUGH!* Out of the smoke falls something magical!', false, 3800);
+    }
+    if (result.events.includes('magickey')) {
+      burst(state.hero, ['#9fe8ff', '#d6b8ff', '#fff'], 18, 2.6);
+      showToast('A magic key! It hums softly. What could it open on the top floor?', false, 3200);
+      flashStat('magicStat');
+    }
+    if (result.events.includes('chest')) {
+      burst(result.opened, ['#f2c45a', '#ff6f98', '#7cc0ff', '#7dff9a', '#fff'], 28, 3);
+      progress.map = true; store.set('sabrina.progress', progress);
+      const at = state;
+      setTimeout(() => { if (state === at && screen === 'play') showTreasureMap(); }, 800);
     }
     if (result.events.includes('key')) {
       burst(state.hero, ['#f2c45a', '#fff3c4'], 12, 2.2);
@@ -263,6 +302,7 @@
     const r = S.step(state, dir);
     if (!r.moved) {
       state = r.state; play(r.events); // just turn to face
+      if (r.events.includes('chestlocked')) showToast('A chest covered in gems! Its keyhole glows a strange blue. An ordinary key won’t fit.', false, 2600);
       if (r.wrong) showToast(`Fizzle! The menu says the ${S.INGREDIENTS[r.need]} goes in next.`, true, 2200);
       return;
     }
@@ -285,7 +325,7 @@
   function undo() {
     if (screen !== 'play' || !history.length) return;
     state = history.pop();
-    anim = null; queued = null; zapAt = 0; wonAt = 0; brew = null;
+    anim = null; queued = null; zapAt = 0; wonAt = 0; brew = null; prizeAnim = null; plumeAt = 0;
     resetTowerHero();
     hideToast();
     tone(500, 0.06, 'triangle', 0.04, 0, 300);
@@ -294,10 +334,10 @@
 
   function restart() {
     if (screen !== 'play') return;
-    const fresh = S.parse(levelOf(levelIndex));
+    const fresh = freshState(levelIndex);
     if (state.moves > 0) history.push(state); // restart can itself be undone
     state = fresh;
-    anim = null; queued = null; particles = []; zapAt = 0; wonAt = 0; brew = null;
+    anim = null; queued = null; particles = []; zapAt = 0; wonAt = 0; brew = null; prizeAnim = null; plumeAt = 0;
     resetTowerHero();
     hideToast();
     tone(300, 0.1, 'triangle', 0.04, 0, 600);
@@ -327,6 +367,7 @@
     $('swings').textContent = state.swings;
     $('keys').textContent = state.keys;
     $('keyStat').hidden = !lv.recipe && !lv.map.some(r => r.includes('L'));
+    $('magicStat').hidden = !state.magicKey;
     $('moves').textContent = state.moves;
     $('muteBtn').textContent = muted ? 'Muted' : 'Sound';
     $('musicBtn').textContent = musicOn && !muted ? 'Music' : 'No music';
@@ -381,6 +422,7 @@
   }
 
   function showTitle() {
+    if (levelIndex === BASEMENT && state && state.magicKey && !progress.magicKey) { progress.magicKey = true; store.set('sabrina.progress', progress); }
     screen = 'title';
     upstairs = null;
     hideToast();
@@ -398,6 +440,8 @@
       </div>
       <button class="primary" id="startBtn">${progress.unlocked > 1 ? 'Continue' : 'Begin the climb'}</button>
       <div class="floors">${floorButtons()}</div>
+      ${progress.map ? '<p class="secret">🗺️ You found a treasure map… <i>to be continued!</i></p>'
+        : progress.magicKey ? '<p class="secret">🗝️ Your magic key hums. Something on the top floor needs it.</p>' : ''}
     `);
     $('startBtn').onclick = () => startFloor(Math.min(progress.unlocked, LEVELS.length) - 1);
     overlay.querySelectorAll('[data-floor]').forEach(b => b.onclick = () => startFloor(+b.dataset.floor));
@@ -418,7 +462,10 @@
     refreshMusic();
   }
 
-  function beginPlay() { closeOverlay(); screen = 'play'; }
+  function beginPlay() {
+    closeOverlay(); screen = 'play';
+    if (state.magicKey && state.floor.includes('J')) showToast('Your magic key is humming… something on this floor wants it.', false, 2600);
+  }
 
   function showClear() {
     screen = 'clear';
@@ -465,6 +512,8 @@
 
   // Back up the basement stairs to floor 1, just as you left it.
   function climbOut(cleared) {
+    const gotKey = state.magicKey && !progress.magicKey;
+    if (gotKey) { progress.magicKey = true; store.set('sabrina.progress', progress); }
     let saved = upstairs;
     upstairs = null;
     if (!saved) {
@@ -479,10 +528,13 @@
     }
     loadLevel(saved.levelIndex);
     state = saved.state; history = saved.history;
+    state.magicKey = !!progress.magicKey;
+    history.forEach(h => { h.magicKey = state.magicKey; });
     closeOverlay();
     screen = 'play';
     updateHud(); drawMenu(); refreshMusic();
-    showToast(cleared ? 'Back in the Gatehouse, pockets full of dragon gems!' : 'You scramble back up to the Gatehouse.', false, 2000);
+    showToast(gotKey ? 'Back in the Gatehouse, with the magic key! Something on the top floor needs it…'
+      : cleared ? 'Back in the Gatehouse, pockets full of dragon gems!' : 'You scramble back up to the Gatehouse.', false, gotKey ? 3200 : 2000);
   }
 
   function showHoard() {
@@ -493,11 +545,71 @@
       <div class="eyebrow">Hidden basement cleared</div>
       <h2>The dragon’s hoard!</h2>
       <p>You grabbed every gem in <b>${state.moves}</b> moves${best && best < state.moves ? ` (best: ${best})` : ''}.</p>
+      ${state.magicKey ? '<p class="story">And tucked in your belt, humming softly: <b>the magic key</b>. Something on the top floor must need it…</p>'
+        : state.choked ? '' : '<p class="secret">Psst… some say a dragon with its mouth stuffed shut chokes on its own smoke.</p>'}
       <p class="story">You tiptoe up the stairs with your pockets full of dragon gems. Behind you, the dragon rolls over and snores on.</p>
       <button class="primary" id="upBtn">Back upstairs</button>
     `);
     SFX.win();
     $('upBtn').onclick = () => climbOut(true);
+  }
+
+  // Inside the gem-covered chest on the top floor.
+  function showTreasureMap() {
+    screen = 'map';
+    hideToast();
+    setOverlay(`
+      <div class="eyebrow">The chest creaks open</div>
+      <h2>A treasure map!</h2>
+      <canvas id="mapArt" width="300" height="190"></canvas>
+      <p class="story">Rolled up in a ribbon is a faded old map. A dotted trail leads from Thornspire Tower,
+      across the Whispering Sea, to a big red <b>X</b> on an island no one has ever heard of…</p>
+      <p class="secret">To be continued!</p>
+      <button class="primary" id="mapBtn">Tuck it away</button>
+    `);
+    SFX.win();
+    drawTreasureMap($('mapArt'));
+    $('mapBtn').onclick = beginPlay;
+  }
+
+  function drawTreasureMap(cv) {
+    const c = cv.getContext('2d'), W = cv.width, H = cv.height;
+    // parchment with ragged edges
+    c.fillStyle = '#e9d7ae';
+    c.beginPath(); c.moveTo(8, 10);
+    for (let x = 8; x <= W - 8; x += 12) c.lineTo(x, 6 + hash(x, 1) * 8);
+    for (let y = 10; y <= H - 8; y += 12) c.lineTo(W - 6 - hash(2, y) * 8, y);
+    for (let x = W - 8; x >= 8; x -= 12) c.lineTo(x, H - 6 - hash(x, 3) * 8);
+    for (let y = H - 10; y >= 10; y -= 12) c.lineTo(6 + hash(4, y) * 8, y);
+    c.closePath(); c.fill();
+    c.strokeStyle = '#a8874f'; c.lineWidth = 2; c.stroke();
+    c.save(); c.clip();
+    c.fillStyle = '#c9b07a55'; c.fillRect(0, 0, W, H);
+    // sea ripples
+    c.strokeStyle = '#7a9bb088'; c.lineWidth = 1.2;
+    for (let k = 0; k < 9; k++) { const x = 60 + hash(k, 9) * 190, y = 30 + hash(9, k) * 130; c.beginPath(); c.arc(x, y, 6, Math.PI * 1.1, Math.PI * 1.9); c.arc(x + 11, y, 6, Math.PI * 1.1, Math.PI * 1.9); c.stroke(); }
+    // home island with the little tower
+    const island = (x, y, r) => { c.fillStyle = '#b89a5e'; c.beginPath(); for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2, rr2 = r * (0.8 + hash(x + k, y) * 0.4); k ? c.lineTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2 * 0.7) : c.moveTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2 * 0.7); } c.closePath(); c.fill(); c.strokeStyle = '#7a5f30'; c.lineWidth = 1.5; c.stroke(); };
+    island(55, 140, 32); island(150, 60, 14); island(245, 70, 34);
+    c.fillStyle = '#5a4a7a'; c.fillRect(50, 116, 10, 22); c.fillStyle = '#c04a6a'; c.beginPath(); c.moveTo(47, 117); c.lineTo(55, 104); c.lineTo(63, 117); c.fill();
+    // palm on the far island
+    c.strokeStyle = '#6b4a26'; c.lineWidth = 2.5; c.beginPath(); c.moveTo(232, 78); c.quadraticCurveTo(228, 64, 234, 54); c.stroke();
+    c.strokeStyle = '#4f7a3a'; c.lineWidth = 2;
+    for (const a of [-2.6, -1.9, -1.2, -0.5]) { c.beginPath(); c.moveTo(234, 54); c.quadraticCurveTo(234 + Math.cos(a) * 9, 54 + Math.sin(a) * 9 - 3, 234 + Math.cos(a) * 15, 54 + Math.sin(a) * 15 + 3); c.stroke(); }
+    // dotted trail and the X
+    c.setLineDash([4, 5]); c.strokeStyle = '#8a3a2a'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(70, 128); c.bezierCurveTo(120, 150, 120, 40, 175, 70); c.bezierCurveTo(205, 88, 230, 95, 255, 78); c.stroke(); c.setLineDash([]);
+    c.strokeStyle = '#d0302a'; c.lineWidth = 4; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(249, 70); c.lineTo(263, 84); c.moveTo(263, 70); c.lineTo(249, 84); c.stroke(); c.lineCap = 'butt';
+    // a sea serpent, because of course
+    c.strokeStyle = '#3f7a6a'; c.lineWidth = 3;
+    c.beginPath(); c.moveTo(150, 150); c.quadraticCurveTo(158, 138, 166, 150); c.quadraticCurveTo(174, 162, 182, 150); c.quadraticCurveTo(188, 141, 194, 147); c.stroke();
+    // compass rose
+    c.fillStyle = '#8a3a2a'; c.beginPath(); c.moveTo(268, 132); c.lineTo(273, 150); c.lineTo(268, 146); c.lineTo(263, 150); c.closePath(); c.fill();
+    c.font = '800 10px Nunito, system-ui, sans-serif'; c.textAlign = 'center'; c.fillText('N', 268, 128);
+    c.font = 'italic 700 11px Georgia, serif'; c.fillStyle = '#6b4a26';
+    c.fillText('Here be more adventures', W / 2, 24);
+    c.restore();
   }
 
   function showFinale() {
@@ -510,6 +622,7 @@
       <canvas id="finaleArt" width="260" height="130"></canvas>
       <p class="story">The gargoyles fall silent, the gate swings wide, and Princess Sabrina takes your hand.
       Together you walk down all six floors into the morning light.</p>
+      ${progress.map ? '<p class="secret">…and in your pocket, a treasure map to an island no one has ever heard of. Where to next?</p>' : ''}
       <p>Your best runs add up to <b>${total}</b> moves. Can you climb it in fewer?</p>
       <button class="primary" id="againBtn">Back to the tower</button>
     `);
@@ -539,6 +652,18 @@
         life: 1, decay: 0.008 + Math.random() * 0.008, g: -0.01, round: true, color: colors[k % colors.length], size: TS * (0.12 + Math.random() * 0.14) });
     }
     burst(i, ['#f2c45a', '#fff3c4', '#ff6f98'], 18, 3);
+  }
+
+  // The dragon choking on its own smoke: a huge plume billowing up out of the lair.
+  function plume() {
+    const d = state.dragon;
+    const x = ((d.x0 + d.x1 + 1) / 2) * TS, y = ((d.y0 + d.y1 + 1) / 2) * TS;
+    const colors = ['#d9d2e6', '#b8a9cf', '#8c807a', '#efe8f7', '#6d6470', '#c9bfd6'];
+    for (let k = 0; k < 110; k++) {
+      const a = Math.random() * Math.PI * 2, v = Math.random() * TS * 0.09;
+      particles.push({ x: x + Math.cos(a) * TS * 0.6, y: y + Math.sin(a) * TS * 0.8, vx: Math.cos(a) * v - TS * 0.02, vy: -Math.random() * TS * 0.06 - 0.3,
+        life: 1, decay: 0.004 + Math.random() * 0.006, g: -0.006, round: true, alpha: 0.5, color: colors[k % colors.length], size: TS * (0.18 + Math.random() * 0.3) });
+    }
   }
 
   // ---------- drawing ----------
@@ -977,6 +1102,63 @@
   }
 
   // ---------- basement sprites ----------
+  // The magic key: like a normal key, but glowing blue-violet with sparkles.
+  function drawMagicKey(px, py, t, scale = 1) {
+    const c = px + TS / 2, m = py + TS / 2 + Math.sin(t / 300) * TS * 0.06;
+    ctx.save(); ctx.translate(c, m); ctx.scale(scale, scale);
+    const g = ctx.createRadialGradient(0, 0, 2, 0, 0, TS * 0.5);
+    g.addColorStop(0, `rgba(160,220,255,${0.55 + 0.2 * Math.sin(t / 200)})`); g.addColorStop(1, 'rgba(180,140,255,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, TS * 0.5, 0, 7); ctx.fill();
+    ctx.rotate(-0.6);
+    ctx.fillStyle = '#b9e6ff'; ctx.strokeStyle = '#6a4bc4'; ctx.lineWidth = Math.max(1.2, TS / 30);
+    ctx.beginPath(); ctx.arc(-TS * 0.18, 0, TS * 0.14, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#d6b8ff'; ctx.beginPath(); ctx.arc(-TS * 0.18, 0, TS * 0.06, 0, 7); ctx.fill();
+    ctx.fillStyle = '#b9e6ff';
+    ctx.fillRect(-TS * 0.05, -TS * 0.04, TS * 0.38, TS * 0.08); ctx.strokeRect(-TS * 0.05, -TS * 0.04, TS * 0.38, TS * 0.08);
+    ctx.fillRect(TS * 0.2, TS * 0.03, TS * 0.06, TS * 0.11); ctx.fillRect(TS * 0.1, TS * 0.03, TS * 0.05, TS * 0.07);
+    ctx.restore();
+    ctx.fillStyle = '#fff';
+    for (let k = 0; k < 3; k++) {
+      const a = t / 500 + k * 2.1, r = TS * 0.36;
+      ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t / 150 + k * 2);
+      const sx = c + Math.cos(a) * r, sy = m + Math.sin(a) * r * 0.8, sz = TS * 0.05;
+      ctx.beginPath(); ctx.moveTo(sx, sy - sz * 2); ctx.lineTo(sx + sz * 0.5, sy); ctx.lineTo(sx, sy + sz * 2); ctx.lineTo(sx - sz * 0.5, sy); ctx.closePath(); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // The gem-covered chest on the top floor (open shows a glowing rolled-up map).
+  function drawChest(px, py, t, open) {
+    const m = TS * 0.1, w = TS - m * 2, top = py + TS * 0.38, h = TS * 0.48;
+    ctx.fillStyle = '#00000044'; ctx.beginPath(); ctx.ellipse(px + TS / 2, py + TS * 0.9, w * 0.5, TS * 0.07, 0, 0, 7); ctx.fill();
+    if (open) {
+      const g = ctx.createRadialGradient(px + TS / 2, top, 2, px + TS / 2, top, TS * 0.6);
+      g.addColorStop(0, `rgba(242,196,90,${0.6 + 0.2 * Math.sin(t / 250)})`); g.addColorStop(1, 'rgba(242,196,90,0)');
+      ctx.fillStyle = g; ctx.fillRect(px, py, TS, TS);
+      ctx.fillStyle = '#6b3f1f'; rr(px + m, py + TS * 0.08, w, TS * 0.3, TS * 0.08); ctx.fill(); // lid tipped back
+      ctx.fillStyle = '#e9d7ae'; ctx.save(); ctx.translate(px + TS / 2, top); ctx.rotate(-0.3); ctx.fillRect(-TS * 0.2, -TS * 0.08, TS * 0.4, TS * 0.12); ctx.fillStyle = '#d0302a'; ctx.fillRect(-TS * 0.02, -TS * 0.08, TS * 0.04, TS * 0.12); ctx.restore();
+    }
+    ctx.fillStyle = '#8a5a33'; rr(px + m, top, w, h, TS * 0.06); ctx.fill();
+    ctx.strokeStyle = '#4a2f1a'; ctx.lineWidth = Math.max(1.5, TS / 26); ctx.stroke();
+    if (!open) { ctx.fillStyle = '#a06a3c'; rr(px + m, py + TS * 0.2, w, TS * 0.22, TS * 0.1); ctx.fill(); ctx.stroke(); } // lid
+    ctx.fillStyle = '#f2c45a';
+    ctx.fillRect(px + m + w * 0.2, open ? top : py + TS * 0.2, TS * 0.06, open ? h : h + TS * 0.18);
+    ctx.fillRect(px + m + w * 0.8 - TS * 0.06, open ? top : py + TS * 0.2, TS * 0.06, open ? h : h + TS * 0.18);
+    // gems all over it
+    const gems = ['#ff5c8a', '#5fd3e8', '#7dff9a', '#d6b8ff', '#ffd24a'];
+    for (let k = 0; k < 9; k++) {
+      const gx = px + m + w * (0.1 + 0.8 * hash(k, 5)), gy = (open ? top : py + TS * 0.22) + (open ? h : h + TS * 0.16) * (0.1 + 0.8 * hash(5, k));
+      ctx.fillStyle = gems[k % gems.length]; ctx.beginPath(); ctx.moveTo(gx, gy - TS * 0.04); ctx.lineTo(gx + TS * 0.035, gy); ctx.lineTo(gx, gy + TS * 0.04); ctx.lineTo(gx - TS * 0.035, gy); ctx.fill();
+    }
+    if (!open) { // glowing blue keyhole
+      const cx0 = px + TS / 2, cy0 = py + TS * 0.52;
+      ctx.fillStyle = '#d0d4dc'; rr(cx0 - TS * 0.08, cy0 - TS * 0.08, TS * 0.16, TS * 0.18, 3); ctx.fill();
+      ctx.fillStyle = `rgba(110,200,255,${0.7 + 0.3 * Math.sin(t / 220)})`; ctx.shadowColor = '#6ec8ff'; ctx.shadowBlur = TS * 0.2;
+      ctx.beginPath(); ctx.arc(cx0, cy0 - TS * 0.01, TS * 0.03, 0, 7); ctx.fill(); ctx.fillRect(cx0 - TS * 0.015, cy0, TS * 0.03, TS * 0.06);
+      ctx.shadowBlur = 0;
+    }
+  }
+
   // The trapdoor, once the crate is pushed off it. A warm glow leaks up through the cracks.
   function drawTrapdoor(px, py, t) {
     const m = TS * 0.1, w = TS - m * 2;
@@ -1107,7 +1289,13 @@
     const phase = S.dragonPhase(state);
     const bw = d.x1 - d.x0 + 1, bh = d.y1 - d.y0 + 1;
     const pos = drawDragonSprite(d.x0 * TS, d.y0 * TS, bw, bh, TS, d.dir, phase, t);
-    if (phase === 'calm') drawZzz(pos.headX, pos.headY, TS * 0.28, t);
+    if (phase === 'calm') drawZzz(pos.headX, pos.headY, state.choked ? TS * 0.38 : TS * 0.28, t);
+    if (state.choked) { // a sleepy little puff now and then
+      const p = (t / 2200) % 1;
+      ctx.globalAlpha = (1 - p) * 0.5; ctx.fillStyle = '#b8aca6';
+      ctx.beginPath(); ctx.arc(pos.nx, pos.ny - p * TS * 0.5, TS * (0.04 + p * 0.08), 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
     if (phase === 'smoke') { // wisps curling up from the nose: fire on the next move!
       for (let k = 0; k < 4; k++) {
         const p = ((t / 900) + k / 4) % 1;
@@ -1191,6 +1379,7 @@
       else if (f === '_') drawPlate(px, py, s.obj[i] === 'B' || s.hero === i);
       else if (f === 'T' && s.obj[i] !== 'B') drawTrapdoor(px, py, t); // hidden while a crate sits on it
       else if (f === 'U') drawStairsUp(px, py, t, unlocked);
+      else if (f === 'J' || f === 'j') drawChest(px, py, t, f === 'j');
       else if (S.GARGOYLES[f]) drawGargoyle(px, py, S.GARGOYLES[f], t);
     }
 
@@ -1231,6 +1420,12 @@
             drawKey(0, 0, t); ctx.restore();
           }
         } else drawKey(px, py, t);
+      } else if (o === 'M') {
+        const el = prizeAnim && prizeAnim.cell === i ? t - prizeAnim.at : 1e9;
+        if (el > 1500) {
+          const p = Math.min(1, (el - 1500) / 450);
+          drawMagicKey(px, py, t, ease(p) * (1 + 0.3 * Math.sin(p * Math.PI)));
+        }
       } else if (o === 'B') {
         if (anim && anim.push && anim.push.to === i) {
           px = lerp(cx(anim.push.from), cx(i), e) * TS; py = lerp(cy(anim.push.from), cy(i), e) * TS;
@@ -1283,7 +1478,7 @@
     particles = particles.filter(p => p.life > 0);
     for (const p of particles) {
       p.x += p.vx; p.y += p.vy; p.vy += p.g ?? 0.12; p.life -= p.decay ?? 0.025;
-      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.globalAlpha = Math.max(0, p.life) * (p.alpha ?? 1);
       ctx.fillStyle = p.color;
       if (p.round) { ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1.6 - p.life * 0.6), 0, 7); ctx.fill(); }
       else ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
@@ -1294,6 +1489,11 @@
     if (zapAt) {
       const a = Math.max(0, 0.45 - (t - zapAt) / 800);
       if (a > 0) { ctx.fillStyle = s.deathBy === 'burn' ? `rgba(255,130,30,${a})` : `rgba(255,60,40,${a})`; ctx.fillRect(0, 0, s.w * TS, s.h * TS); }
+    }
+    // smoky haze while the plume clears
+    if (plumeAt) {
+      const a = Math.max(0, 0.45 * (1 - (t - plumeAt) / 2600));
+      if (a > 0) { ctx.fillStyle = `rgba(200,190,210,${a})`; ctx.fillRect(0, 0, s.w * TS, s.h * TS); }
     }
     // win glow
     if (wonAt) {

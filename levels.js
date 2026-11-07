@@ -89,7 +89,7 @@
         '#*..........<',
         '#.#.######|##',
         '#H..R*.._#.S#',
-        '#...#....#..#',
+        '#...#....#.J#', // J: a gem-covered chest that only the basement's magic key opens
         '#############',
       ],
     },
@@ -100,18 +100,20 @@
   // lead back up to floor 1 just as you left it.
   LEVELS.basement = {
     name: 'The Dragon’s Lair',
-    hint: 'The dragon breathes fire on every third move. When smoke curls from its nose, it’s about to blow! Crates block the flames. Grab the hoard and climb back up.',
+    hint: 'The dragon breathes fire on every third move. When smoke curls from its nose, it’s about to blow! Crates block the flames, and a dragon with its mouth stuffed shut can’t breathe at all… Grab the hoard and climb back up.',
     dragonDir: 'left',
     breath: 3,
+    prize: [10, 2], // where the magic key appears if every row of fire gets jammed with a crate
     map: [
       '#############',
-      '#U@..#..*...#',
-      '#..B.#......#',
-      '#.........XX#',
-      '#*..B.....XX#',
-      '#.........XX#',
-      '#.#.##.#.####',
-      '#*..B..#*..*#',
+      '#U@..#.*...*#',
+      '#....B.B.#..#',
+      '#....#....XX#',
+      '#.......*.XX#',
+      '#....#....XX#',
+      '##.####.#####',
+      '#*.....B..*.#',
+      '#.....#.....#',
       '#############',
     ],
   };
