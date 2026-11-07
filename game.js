@@ -44,13 +44,54 @@
   ];
 
   // ---------- sound ----------
-  let actx = null;
-  let muted = store.get('sabrina.muted', false);
+  let actx = null, master = null, sfxBus = null, musicBus = null;
+  let muted = store.get('sabrina.muted', false);        // Sound button: everything off
+  let musicOn = store.get('sabrina.music', true);       // Music button: just the tunes
   function audio() {
     if (muted) return null;
-    if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; } }
-    if (actx.state === 'suspended') actx.resume();
+    if (!actx) {
+      try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; }
+      // everything goes through a compressor so effects and music can be loud without clipping
+      master = actx.createDynamicsCompressor();
+      master.threshold.value = -14; master.ratio.value = 4;
+      const out = actx.createGain(); out.gain.value = 1.2;
+      master.connect(out).connect(actx.destination);
+      sfxBus = actx.createGain(); sfxBus.gain.value = 2.2; sfxBus.connect(master);
+      musicBus = actx.createGain(); musicBus.gain.value = 0.9; musicBus.connect(master);
+    }
+    if (actx.state === 'suspended' && !document.hidden) actx.resume().catch(() => {});
     return actx;
+  }
+
+  // Browsers keep sound off until the player taps or presses a key, and iPhones also need a
+  // sound started inside that tap. This runs on every tap and key, and is cheap once unlocked.
+  let unlocked = false;
+  function unlockAudio() {
+    const a = audio(); if (!a) return;
+    // iPhone: play through the ringer/silent switch, like a game would
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* not supported */ }
+    if (!unlocked) {
+      const src = a.createBufferSource();
+      src.buffer = a.createBuffer(1, 1, 22050);
+      src.connect(a.destination); src.start(0);
+      unlocked = true;
+    }
+    refreshMusic();
+  }
+  ['pointerdown', 'pointerup', 'touchend', 'keydown', 'click'].forEach(ev =>
+    window.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
+  document.addEventListener('visibilitychange', () => {
+    if (!actx) return;
+    if (document.hidden) actx.suspend().catch(() => {});
+    else if (!muted) actx.resume().catch(() => {});
+  });
+
+  // ---------- music ----------
+  const music = window.SabrinaMusic.createPlayer(() => (muted ? null : actx), () => musicBus);
+  function wantedSong() { return screen === 'title' ? 'title' : screen === 'finale' ? 'finale' : levelIndex; }
+  function refreshMusic() {
+    if (muted || !musicOn || !actx) { music.stop(); return; }
+    music.play(wantedSong());
   }
   function tone(freq, dur, type = 'square', vol = 0.06, when = 0, slideTo = null) {
     const a = audio(); if (!a) return;
@@ -60,7 +101,7 @@
     if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(a.destination);
+    o.connect(g).connect(sfxBus);
     o.start(t); o.stop(t + dur + 0.02);
   }
   function noise(dur, vol, freq, when = 0) {
@@ -73,7 +114,7 @@
     const src = a.createBufferSource(); src.buffer = buf;
     const f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = freq;
     const g = a.createGain(); g.gain.value = vol;
-    src.connect(f).connect(g).connect(a.destination);
+    src.connect(f).connect(g).connect(sfxBus);
     src.start(t);
   }
   const SFX = {
@@ -249,6 +290,9 @@
     $('keyStat').hidden = !LEVELS[levelIndex].recipe && !LEVELS[levelIndex].map.some(r => r.includes('L'));
     $('moves').textContent = state.moves;
     $('muteBtn').textContent = muted ? 'Muted' : 'Sound';
+    $('musicBtn').textContent = musicOn && !muted ? 'Music' : 'No music';
+    $('musicBtn').classList.toggle('off', !musicOn || muted);
+    $('muteBtn').classList.toggle('off', muted);
   }
 
   let toastTimer = null;
@@ -310,6 +354,7 @@
     `);
     $('startBtn').onclick = () => startFloor(Math.min(progress.unlocked, LEVELS.length) - 1);
     overlay.querySelectorAll('[data-floor]').forEach(b => b.onclick = () => startFloor(+b.dataset.floor));
+    refreshMusic();
   }
 
   function startFloor(i) {
@@ -323,6 +368,7 @@
       <button class="primary" id="goBtn">Enter</button>
     `);
     $('goBtn').onclick = beginPlay;
+    refreshMusic();
   }
 
   function beginPlay() { closeOverlay(); screen = 'play'; }
@@ -358,6 +404,7 @@
       <button class="primary" id="againBtn">Back to the tower</button>
     `);
     SFX.finale();
+    refreshMusic();
     finaleStart = performance.now();
     $('againBtn').onclick = showTitle;
   }
@@ -1199,6 +1246,7 @@
       else if (e.code === 'KeyZ' || e.code === 'Backspace' || e.code === 'KeyU') { e.preventDefault(); undo(); }
       else if (e.code === 'KeyR' && !e.repeat) restart();
       else if (e.code === 'KeyM') toggleMute();
+      else if (e.code === 'KeyN') toggleMusic();
       else if (e.code === 'Escape') showTitle();
     } else if ((e.code === 'Enter' || e.code === 'Space') && !e.repeat) {
       e.preventDefault();
@@ -1212,12 +1260,23 @@
   function toggleMute() {
     muted = !muted;
     store.set('sabrina.muted', muted);
+    if (!muted) audio();
+    refreshMusic();
+    updateHud();
+  }
+
+  function toggleMusic() {
+    musicOn = !musicOn;
+    store.set('sabrina.music', musicOn);
+    if (musicOn && muted) { muted = false; store.set('sabrina.muted', false); audio(); } // turning music on means sound on too
+    refreshMusic();
     updateHud();
   }
 
   $('undoBtn').onclick = e => { e.currentTarget.blur(); undo(); };
   $('restartBtn').onclick = e => { e.currentTarget.blur(); restart(); };
   $('muteBtn').onclick = e => { e.currentTarget.blur(); toggleMute(); };
+  $('musicBtn').onclick = e => { e.currentTarget.blur(); toggleMusic(); };
   $('menuBtn').onclick = e => { e.currentTarget.blur(); showTitle(); };
   $('padSmash').onclick = trySmash;
   $('padUndo').onclick = undo;

@@ -47,13 +47,14 @@
   #floorLabel { font-family: 'Cinzel Decorative', serif; font-weight: 700; font-size: 17px; color: var(--gold); flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .stat { display: inline-flex; align-items: center; gap: 5px; font-weight: 800; font-size: 15px; font-variant-numeric: tabular-nums; }
   .stat svg { width: 18px; height: 18px; }
-  .btns { display: flex; gap: 6px; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; }
   button {
     font: inherit; font-weight: 800; color: var(--text); cursor: pointer;
     background: #34284d; border: 2px solid #514070; border-radius: 9px; padding: 5px 10px;
   }
   button:hover { background: #40325e; }
   button:active { transform: translateY(1px); }
+  button.off { opacity: .55; text-decoration: line-through; }
   button.primary { background: linear-gradient(#f6cf6a, #d9a53a); color: #3a2410; border-color: #a87a22; font-size: 18px; padding: 10px 26px; }
   button.primary:hover { background: linear-gradient(#ffd97a, #e3b048); }
   .kbd { opacity: .6; font-weight: 400; font-size: 12px; margin-left: 3px; }
@@ -141,7 +142,8 @@
     <div class="btns">
       <button id="undoBtn" title="Undo (Z)">Undo<span class="kbd">Z</span></button>
       <button id="restartBtn" title="Restart floor (R)">Restart<span class="kbd">R</span></button>
-      <button id="muteBtn" title="Sound on/off (M)">Sound</button>
+      <button id="musicBtn" title="Music on/off (N)">Music</button>
+      <button id="muteBtn" title="All sound on/off (M)">Sound</button>
       <button id="menuBtn" title="Menu (Esc)">Menu</button>
     </div>
   </div>
@@ -167,6 +169,7 @@
 
 <script src="logic.js"></script>
 <script src="levels.js"></script>
+<script src="music.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
