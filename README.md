@@ -3,9 +3,21 @@
 Princess Sabrina is locked at the top of Thornspire Tower. Climb six floors of push-the-crate puzzles to save her.
 
 - Push crates, fill water with crates to make bridges, smash cracked rocks with the hammer, block gargoyle glares, hold gates open with pressure plates, and brew a key in the witch's cauldron (push the ingredients in, in the order on the menu).
-- There's a secret: one crate on floor 1 is hiding a trapdoor (listen for it snoring). Push it aside to climb down to the hidden basement, where a sleeping dragon breathes fire across the room on every third move. Smoke from its nose warns you one move ahead, and crates block the flames. Grab its hoard and take the stairs back up to floor 1, which waits just as you left it. Clever pushers can jam a crate into the dragon's mouth on all three rows: it chokes on its own smoke, falls asleep for good, and coughs up a magic key that opens the gem-covered chest next to Sabrina on the top floor. Inside is a treasure map (to be continued…). The basement doesn't count toward the six floors. Once you've found it, it gets a 🐉 button in the floor picker and shows up under the tower.
+- There's a secret: one crate on floor 1 is hiding a trapdoor (listen for it snoring). Push it aside to climb down to the hidden basement, where a sleeping dragon breathes fire across the room on every third move. Smoke from its nose warns you one move ahead, and crates block the flames. Grab its hoard and take the stairs back up to floor 1, which waits just as you left it. Clever pushers can jam a crate into the dragon's mouth on all three rows: it chokes on its own smoke, falls asleep for good, and coughs up a magic key that opens the gem-covered chest next to Sabrina on the top floor. Inside is Celia's treasure map, with the secret word for the sequel written on it (see below). The basement doesn't count toward the six floors. Once you've found it, it gets a 🐉 button in the floor picker and shows up under the tower.
 - When the screen is wide enough, a cutaway of the tower sits beside the board and shows which floor you're on. Your little knight walks along with you and climbs the stairs when you clear a floor.
 - Arrows / WASD to move, Space to swing the hammer, Z to undo, R to restart, M for all sound on/off, N for music on/off. On phones, use the on-screen pad or swipe.
+
+## Part two: The Hunt for Sabrina's Treasure
+
+The treasure map leads to a second game at `treasure/` (https://junkerfamily.github.io/SaveThePrincess/treasure/). Sabrina and her knight row to three islands to find the treasure of her great-grandmother Celia, the inventor. A dockmaster asks for the secret word written on the map, so you have to find the map in the tower first. (The page only keeps a scrambled copy of the word, so it isn't in the page source as plain text.)
+
+- **The Boat House** (puzzles 1–2): climb into the rowboat. It glides until it bumps into something. Push crates into the water to give it something to stop against.
+- **Tiki Island** (puzzles 3–4): coconuts roll until they hit something, and they float, so a coconut rolled into the water becomes a stepping stone. At the tiki bar, push the pineapple, coconut and paper umbrella into the punch bowl in the order on the menu to get a key.
+- **Troll Island** (puzzles 5–7): dark tunnels lit by your tiki torch. Trolls grab you if you walk right next to them, but they turn to stone beside a fire pot. Push the pots up next to them. The last puzzle ends at Celia's chest.
+
+Add `?level=` and a puzzle number (1–7) to jump to it, once you've entered the secret word on that device.
+
+Files: `treasure/logic.js` (rules, no DOM), `treasure/levels.js` (the seven puzzles), `treasure/music.js` (island tunes, played by the tower's `music.js`), `treasure/game.js` (drawing, sound, screens) and `treasure/index.html`.
 
 ## Files
 - `index.html`: page and styles

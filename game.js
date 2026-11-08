@@ -440,11 +440,13 @@
       </div>
       <button class="primary" id="startBtn">${progress.unlocked > 1 ? 'Continue' : 'Begin the climb'}</button>
       <div class="floors">${floorButtons()}</div>
-      ${progress.map ? '<p class="secret">🗺️ You found a treasure map… <i>to be continued!</i></p>'
+      ${progress.map ? `<p class="secret">🗺️ You found Celia’s treasure map!</p>
+        <p><button id="seeMapBtn">Look at the map</button> <a class="btnlink" href="treasure/">Follow the map →</a></p>`
         : progress.magicKey ? '<p class="secret">🗝️ Your magic key hums. Something on the top floor needs it.</p>' : ''}
     `);
     $('startBtn').onclick = () => startFloor(Math.min(progress.unlocked, LEVELS.length) - 1);
     overlay.querySelectorAll('[data-floor]').forEach(b => b.onclick = () => startFloor(+b.dataset.floor));
+    if ($('seeMapBtn')) $('seeMapBtn').onclick = () => showTreasureMap(true);
     refreshMusic();
   }
 
@@ -554,24 +556,28 @@
     $('upBtn').onclick = () => climbOut(true);
   }
 
-  // Inside the gem-covered chest on the top floor.
-  function showTreasureMap() {
+  // Inside the gem-covered chest on the top floor. Also opens from the title screen once found.
+  function showTreasureMap(fromTitle) {
     screen = 'map';
     hideToast();
     setOverlay(`
-      <div class="eyebrow">The chest creaks open</div>
+      <div class="eyebrow">${fromTitle ? 'Celia’s map' : 'The chest creaks open'}</div>
       <h2>A treasure map!</h2>
-      <canvas id="mapArt" width="300" height="190"></canvas>
-      <p class="story">Rolled up in a ribbon is a faded old map. A dotted trail leads from Thornspire Tower,
-      across the Whispering Sea, to a big red <b>X</b> on an island no one has ever heard of…</p>
-      <p class="secret">To be continued!</p>
-      <button class="primary" id="mapBtn">Tuck it away</button>
+      <canvas id="mapArt" width="320" height="230"></canvas>
+      <p class="story">Rolled up in a ribbon is a faded old map signed <i>Celia</i>: Sabrina’s great-grandmother,
+      the famous inventor. A dotted trail leads from Thornspire Tower to a boat house, across the sea to Tiki Island,
+      and on to a big red <b>X</b> on Troll Island.</p>
+      <p class="secret">Remember the secret word at the bottom of the map. The dockmaster won’t let you sail without it!</p>
+      <button class="primary" id="mapBtn">${fromTitle ? 'Back' : 'Tuck it away'}</button>
+      <p><a class="btnlink" href="treasure/">Follow the map →</a></p>
     `);
-    SFX.win();
+    if (!fromTitle) SFX.win();
     drawTreasureMap($('mapArt'));
-    $('mapBtn').onclick = beginPlay;
+    $('mapBtn').onclick = fromTitle ? showTitle : beginPlay;
   }
 
+  // Celia's map: the tower, the boat house, Tiki Island and Troll Island, with the secret word
+  // for the next game ("The Hunt for Sabrina's Treasure") written along the bottom.
   function drawTreasureMap(cv) {
     const c = cv.getContext('2d'), W = cv.width, H = cv.height;
     // parchment with ragged edges
@@ -587,28 +593,42 @@
     c.fillStyle = '#c9b07a55'; c.fillRect(0, 0, W, H);
     // sea ripples
     c.strokeStyle = '#7a9bb088'; c.lineWidth = 1.2;
-    for (let k = 0; k < 9; k++) { const x = 60 + hash(k, 9) * 190, y = 30 + hash(9, k) * 130; c.beginPath(); c.arc(x, y, 6, Math.PI * 1.1, Math.PI * 1.9); c.arc(x + 11, y, 6, Math.PI * 1.1, Math.PI * 1.9); c.stroke(); }
-    // home island with the little tower
-    const island = (x, y, r) => { c.fillStyle = '#b89a5e'; c.beginPath(); for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2, rr2 = r * (0.8 + hash(x + k, y) * 0.4); k ? c.lineTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2 * 0.7) : c.moveTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2 * 0.7); } c.closePath(); c.fill(); c.strokeStyle = '#7a5f30'; c.lineWidth = 1.5; c.stroke(); };
-    island(55, 140, 32); island(150, 60, 14); island(245, 70, 34);
-    c.fillStyle = '#5a4a7a'; c.fillRect(50, 116, 10, 22); c.fillStyle = '#c04a6a'; c.beginPath(); c.moveTo(47, 117); c.lineTo(55, 104); c.lineTo(63, 117); c.fill();
-    // palm on the far island
-    c.strokeStyle = '#6b4a26'; c.lineWidth = 2.5; c.beginPath(); c.moveTo(232, 78); c.quadraticCurveTo(228, 64, 234, 54); c.stroke();
+    for (let k = 0; k < 10; k++) { const x = 40 + hash(k, 9) * 240, y = 40 + hash(9, k) * 110; c.beginPath(); c.arc(x, y, 6, Math.PI * 1.1, Math.PI * 1.9); c.arc(x + 11, y, 6, Math.PI * 1.1, Math.PI * 1.9); c.stroke(); }
+    const island = (x, y, r, fill = '#b89a5e') => { c.fillStyle = fill; c.beginPath(); for (let k = 0; k < 10; k++) { const a = k / 10 * Math.PI * 2, rr2 = r * (0.8 + hash(x + k, y) * 0.4); k ? c.lineTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2 * 0.7) : c.moveTo(x + Math.cos(a) * rr2, y + Math.sin(a) * rr2 * 0.7); } c.closePath(); c.fill(); c.strokeStyle = '#7a5f30'; c.lineWidth = 1.5; c.stroke(); };
+    island(58, 140, 36); island(165, 92, 24); island(262, 60, 32, '#9a8a72');
+    // Thornspire Tower and the boat house beside it
+    c.fillStyle = '#5a4a7a'; c.fillRect(40, 112, 10, 24); c.fillStyle = '#c04a6a'; c.beginPath(); c.moveTo(37, 113); c.lineTo(45, 100); c.lineTo(53, 113); c.fill();
+    c.fillStyle = '#7a5530'; c.fillRect(64, 128, 18, 12); c.fillStyle = '#8a3a2a'; c.beginPath(); c.moveTo(61, 129); c.lineTo(73, 120); c.lineTo(85, 129); c.fill();
+    c.strokeStyle = '#7a5530'; c.lineWidth = 2; c.beginPath(); c.moveTo(82, 138); c.lineTo(96, 138); c.stroke(); // the dock
+    // palm and tiki hut on Tiki Island
+    c.strokeStyle = '#6b4a26'; c.lineWidth = 2.5; c.beginPath(); c.moveTo(172, 96); c.quadraticCurveTo(168, 82, 174, 72); c.stroke();
     c.strokeStyle = '#4f7a3a'; c.lineWidth = 2;
-    for (const a of [-2.6, -1.9, -1.2, -0.5]) { c.beginPath(); c.moveTo(234, 54); c.quadraticCurveTo(234 + Math.cos(a) * 9, 54 + Math.sin(a) * 9 - 3, 234 + Math.cos(a) * 15, 54 + Math.sin(a) * 15 + 3); c.stroke(); }
+    for (const a of [-2.6, -1.9, -1.2, -0.5]) { c.beginPath(); c.moveTo(174, 72); c.quadraticCurveTo(174 + Math.cos(a) * 9, 72 + Math.sin(a) * 9 - 3, 174 + Math.cos(a) * 15, 72 + Math.sin(a) * 15 + 3); c.stroke(); }
+    c.fillStyle = '#c9a26a'; c.beginPath(); c.moveTo(148, 92); c.lineTo(156, 82); c.lineTo(164, 92); c.fill();
+    // rocky Troll Island with a cave
+    c.fillStyle = '#6d6470'; c.beginPath(); c.moveTo(240, 64); c.lineTo(252, 42); c.lineTo(262, 52); c.lineTo(274, 36); c.lineTo(288, 64); c.fill();
+    c.fillStyle = '#2a2430'; c.beginPath(); c.ellipse(264, 62, 6, 7, 0, Math.PI, 0); c.fill();
     // dotted trail and the X
     c.setLineDash([4, 5]); c.strokeStyle = '#8a3a2a'; c.lineWidth = 2;
-    c.beginPath(); c.moveTo(70, 128); c.bezierCurveTo(120, 150, 120, 40, 175, 70); c.bezierCurveTo(205, 88, 230, 95, 255, 78); c.stroke(); c.setLineDash([]);
+    c.beginPath(); c.moveTo(50, 132); c.lineTo(70, 136); c.bezierCurveTo(110, 150, 120, 110, 150, 100); c.bezierCurveTo(190, 88, 210, 40, 248, 54); c.stroke(); c.setLineDash([]);
     c.strokeStyle = '#d0302a'; c.lineWidth = 4; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(249, 70); c.lineTo(263, 84); c.moveTo(263, 70); c.lineTo(249, 84); c.stroke(); c.lineCap = 'butt';
+    c.beginPath(); c.moveTo(256, 44); c.lineTo(270, 58); c.moveTo(270, 44); c.lineTo(256, 58); c.stroke(); c.lineCap = 'butt';
     // a sea serpent, because of course
     c.strokeStyle = '#3f7a6a'; c.lineWidth = 3;
-    c.beginPath(); c.moveTo(150, 150); c.quadraticCurveTo(158, 138, 166, 150); c.quadraticCurveTo(174, 162, 182, 150); c.quadraticCurveTo(188, 141, 194, 147); c.stroke();
+    c.beginPath(); c.moveTo(200, 140); c.quadraticCurveTo(208, 128, 216, 140); c.quadraticCurveTo(224, 152, 232, 140); c.quadraticCurveTo(238, 131, 244, 137); c.stroke();
     // compass rose
-    c.fillStyle = '#8a3a2a'; c.beginPath(); c.moveTo(268, 132); c.lineTo(273, 150); c.lineTo(268, 146); c.lineTo(263, 150); c.closePath(); c.fill();
-    c.font = '800 10px Nunito, system-ui, sans-serif'; c.textAlign = 'center'; c.fillText('N', 268, 128);
-    c.font = 'italic 700 11px Georgia, serif'; c.fillStyle = '#6b4a26';
-    c.fillText('Here be more adventures', W / 2, 24);
+    c.fillStyle = '#8a3a2a'; c.beginPath(); c.moveTo(290, 124); c.lineTo(295, 142); c.lineTo(290, 138); c.lineTo(285, 142); c.closePath(); c.fill();
+    c.font = '800 10px Nunito, system-ui, sans-serif'; c.textAlign = 'center'; c.fillText('N', 290, 120);
+    // labels
+    c.font = 'italic 700 10px Georgia, serif'; c.fillStyle = '#6b4a26';
+    c.fillText('Boat House', 78, 160); c.fillText('Tiki Island', 160, 116); c.fillText('Troll Island', 262, 84);
+    c.font = 'italic 700 13px Georgia, serif'; c.fillText('Celia’s Map', W / 2, 26);
+    // the secret word, on a scroll along the bottom
+    c.fillStyle = '#f3e6c4'; c.strokeStyle = '#a8874f'; c.lineWidth = 1.5;
+    c.beginPath(); c.rect(56, 178, W - 112, 34); c.fill(); c.stroke();
+    c.fillStyle = '#d9c393'; c.beginPath(); c.ellipse(56, 195, 6, 17, 0, 0, 7); c.fill(); c.stroke(); c.beginPath(); c.ellipse(W - 56, 195, 6, 17, 0, 0, 7); c.fill(); c.stroke();
+    c.fillStyle = '#6b4a26'; c.font = 'italic 700 9px Georgia, serif'; c.fillText('Secret word for the dockmaster:', W / 2, 190);
+    c.fillStyle = '#8a2a1a'; c.font = '900 15px Georgia, serif'; c.fillText('B A R N A C L E', W / 2, 206);
     c.restore();
   }
 
@@ -622,7 +642,7 @@
       <canvas id="finaleArt" width="260" height="130"></canvas>
       <p class="story">The gargoyles fall silent, the gate swings wide, and Princess Sabrina takes your hand.
       Together you walk down all six floors into the morning light.</p>
-      ${progress.map ? '<p class="secret">…and in your pocket, a treasure map to an island no one has ever heard of. Where to next?</p>' : ''}
+      ${progress.map ? '<p class="secret">…and in your pocket, Celia’s treasure map. Where to next? <a href="treasure/">Follow the map →</a></p>' : ''}
       <p>Your best runs add up to <b>${total}</b> moves. Can you climb it in fewer?</p>
       <button class="primary" id="againBtn">Back to the tower</button>
     `);
